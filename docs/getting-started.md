@@ -8,7 +8,7 @@ Install and configure terminalfour-js in server-side TypeScript code, then verif
 npm install @terminalfour/terminalfour-js
 ```
 
-The package includes TypeScript declarations and supports both ESM (`import`) and CommonJS (`require`). It requires **Node 18 or later** because it uses the built-in `fetch`, `FormData`, and `Error.cause`.
+The package includes TypeScript declarations and supports both ESM (`import`) and CommonJS (`require`). It requires **Node 18 or later** because it uses the built-in `fetch`, `FormData`, and `Error.cause`. We recommend using the latest LTS release of Node.
 
 ## Create a client
 

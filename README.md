@@ -3,11 +3,11 @@
 A TypeScript SDK for working with the [Terminalfour](https://www.terminalfour.com/) Platform REST API.
 
 ```bash
-npm install terminalfour-js
+npm install @terminalfour/terminalfour-js
 ```
 
 ```typescript
-import { T4Client } from 'terminalfour-js';
+import { T4Client } from '@terminalfour/terminalfour-js';
 
 const t4 = new T4Client({
   baseUrl: 'https://mysite.edu/terminalfour/rs',
@@ -54,7 +54,7 @@ await section.addSection({ name: 'Child', customFields: { Title: 'Hello' } });
 
 ## Requirements
 
-- **Node 18 or later:** The SDK uses the built-in `fetch`, `FormData`, and `Error.cause`.
+- **Node 18 or later (We recommend the latest LTS version):** The SDK uses the built-in `fetch`, `FormData`, and `Error.cause`.
 - **Server-side execution:** Do not include the SDK or API token in front-end code.
 - **ESM and CommonJS:** Use either `import` or `require`.
 - **TypeScript declarations:** No `@types` package is needed.
@@ -109,7 +109,7 @@ Start with [Getting Started](./docs/getting-started.md), then use the resource g
 ## More examples
 
 ```typescript
-// Bulk approve all pending content
+// Bulk approve all pending content in a section
 const totalApprovedCount = await t4.section(482).content.approveAll();
 
 // Duplicate a content item
@@ -160,10 +160,6 @@ npm run build
 
 Every change to `src/` should have matching test coverage in `tests/`.
 
-Contributions require a signed [CLA](./CLA.md). Report security issues privately per [SECURITY.md](./SECURITY.md) rather than as a public issue.
+## License
 
-## Licence
-
-[Elastic License 2.0](./LICENSE.md).
-
-This project is **open code, not open source**. You can read, use, modify, and distribute the SDK. You cannot offer it to third parties as a hosted or managed service. The Elastic License 2.0 is a source-available licence, not an OSI-approved open-source licence.
+See LICENSE.md.
