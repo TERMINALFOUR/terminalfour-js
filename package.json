@@ -1,7 +1,25 @@
 {
-  "name": "terminalfour-js",
-  "version": "1.0.0",
+  "name": "@terminalfour/terminalfour-js",
+  "version": "1.0.0-rc.1",
   "description": "JavaScript / TypeScript SDK for the Terminalfour Web Services REST API",
+  "keywords": [
+    "terminalfour",
+    "t4",
+    "cms",
+    "sdk",
+    "rest-api",
+    "content-management",
+    "typescript"
+  ],
+  "homepage": "https://github.com/TERMINALFOUR/terminalfour-js#readme",
+  "bugs": {
+    "url": "https://github.com/TERMINALFOUR/terminalfour-js/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/TERMINALFOUR/terminalfour-js.git"
+  },
+  "author": "Terminalfour Solutions Limited",
   "main": "dist/cjs/index.js",
   "module": "dist/esm/index.js",
   "types": "dist/esm/index.d.ts",
@@ -27,8 +45,12 @@
   "engines": {
     "node": ">=18"
   },
+  "publishConfig": {
+    "access": "public"
+  },
   "scripts": {
-    "build": "tsc -p tsconfig.esm.json && tsc -p tsconfig.cjs.json && echo '{\"type\":\"commonjs\"}' > dist/cjs/package.json",
+    "clean": "rm -rf dist",
+    "build": "npm run clean && tsc -p tsconfig.esm.json && tsc -p tsconfig.cjs.json && echo '{\"type\":\"commonjs\"}' > dist/cjs/package.json",
     "test": "vitest --run",
     "prepublishOnly": "npm run test && npm run build"
   },

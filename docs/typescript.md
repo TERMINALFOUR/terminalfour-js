@@ -32,7 +32,7 @@ import {
   HandlebarsItem,
   HandlebarsContentResource,
   NAVIGATION_TYPE_NAMES,
-} from 'terminalfour-js';
+} from '@terminalfour/terminalfour-js';
 ```
 
 ## Type-only exports
@@ -103,7 +103,7 @@ import type {
   PartialSummary,
   Helper,
   Partial,
-} from 'terminalfour-js';
+} from '@terminalfour/terminalfour-js';
 ```
 
 ## Module formats

@@ -7,7 +7,7 @@ The SDK distinguishes API failures from client-side validation errors. Enable de
 API failures throw `T4ApiError`. Check its properties to identify the failed request and response:
 
 ```typescript
-import { T4Client, T4ApiError } from 'terminalfour-js';
+import { T4Client, T4ApiError } from '@terminalfour/terminalfour-js';
 
 try {
   await t4.section(482).content.get(99999);
