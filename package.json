@@ -1,6 +1,6 @@
 {
   "name": "@terminalfour/terminalfour-js",
-  "version": "1.0.0-rc.1",
+  "version": "1.0.0-rc.2",
   "description": "JavaScript / TypeScript SDK for the Terminalfour Web Services REST API",
   "keywords": [
     "terminalfour",
@@ -40,7 +40,8 @@
     "dist",
     "docs",
     "README.md",
-    "LICENSE.md"
+    "LICENSE.md",
+    "!dist/**/*.map"
   ],
   "engines": {
     "node": ">=18"
