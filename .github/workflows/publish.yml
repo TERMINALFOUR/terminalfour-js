@@ -29,15 +29,16 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
           registry-url: 'https://registry.npmjs.org'
           cache: npm
 
       - name: Upgrade npm for OIDC trusted publishing
-        # Trusted publishing (OIDC) requires npm >= 11.5.1. The npm bundled with
-        # Node 20 is older and falls back to token auth, which fails with a
-        # misleading 404 on publish. Pin to latest to get OIDC support.
-        run: npm install -g npm@latest
+        # OIDC trusted publishing requires npm >= 11.5.1. Node 22 bundles npm
+        # 10.x (too old), and npm@latest (12.x) requires Node 22.22+/24/26, so
+        # it can EBADENGINE on this runner. Pin to the 11.x line, which supports
+        # OIDC and runs on Node 22.
+        run: npm install -g npm@11
 
       - name: Read package version
         id: pkg
