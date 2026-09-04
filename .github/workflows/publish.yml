@@ -1,0 +1,71 @@
+name: Publish
+
+# Publishes to npm when the version in package.json changes on main.
+#
+# Release process (same for every release, including 1.0.0):
+#   1. Open a PR that bumps "version" in package.json (npm version --no-git-tag-version <level>).
+#   2. Merge it to main once CI passes.
+#   3. This workflow detects the new version, publishes to npm, and creates the
+#      matching git tag and GitHub Release automatically.
+#
+# No manual tagging. No stored npm token — publishing uses npm Trusted
+# Publishing (OIDC), which requires:
+#   - a public repository, and
+#   - a trusted publisher configured on the npm package pointing at this
+#     workflow (Settings -> the package on npmjs.com -> Trusted Publishing).
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write      # create the git tag and GitHub Release
+      id-token: write      # OIDC identity for npm Trusted Publishing + provenance
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          registry-url: 'https://registry.npmjs.org'
+          cache: npm
+
+      - name: Read package version
+        id: pkg
+        run: echo "version=$(node -p "require('./package.json').version")" >> "$GITHUB_OUTPUT"
+
+      - name: Check whether this version is already on npm
+        id: check
+        run: |
+          if npm view "@terminalfour/terminalfour-js@${{ steps.pkg.outputs.version }}" version >/dev/null 2>&1; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+            echo "Version ${{ steps.pkg.outputs.version }} already published; nothing to do."
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+            echo "Version ${{ steps.pkg.outputs.version }} is new; will publish."
+          fi
+
+      - name: Install dependencies
+        if: steps.check.outputs.exists == 'false'
+        run: npm ci
+
+      - name: Publish to npm
+        if: steps.check.outputs.exists == 'false'
+        run: npm publish --provenance
+        # prepublishOnly (test + build) runs automatically before the upload.
+        # --access public is already set via package.json publishConfig.
+        # No NODE_AUTH_TOKEN: OIDC Trusted Publishing authenticates this workflow.
+
+      - name: Create git tag and GitHub Release
+        if: steps.check.outputs.exists == 'false'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          VERSION="${{ steps.pkg.outputs.version }}"
+          gh release create "v${VERSION}" \
+            --title "v${VERSION}" \
+            --generate-notes \
+            --target "${GITHUB_SHA}"

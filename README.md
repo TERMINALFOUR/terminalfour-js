@@ -1,5 +1,8 @@
 # terminalfour-js
 
+[![npm](https://img.shields.io/npm/v/@terminalfour/terminalfour-js)](https://www.npmjs.com/package/@terminalfour/terminalfour-js)
+[![license](https://img.shields.io/badge/license-Elastic--2.0-blue)](./LICENSE.md)
+
 A TypeScript SDK for working with the [Terminalfour](https://www.terminalfour.com/) Platform REST API.
 
 ```bash
@@ -160,6 +163,11 @@ npm run build
 
 Every change to `src/` should have matching test coverage in `tests/`.
 
+Contributions require a signed [CLA](./CLA.md). Report security issues privately per [SECURITY.md](./SECURITY.md) rather than as a public issue.
+
 ## License
 
-See LICENSE.md.
+[Elastic License 2.0](./LICENSE.md).
+
+This project is **open code, not open source**. You can read, use, modify, and distribute the SDK. You cannot offer it to third parties as a hosted or managed service. The Elastic License 2.0 is a source-available licence, not an OSI-approved open-source licence.
+
