@@ -36,8 +36,8 @@ The returned `ContentType` includes these main properties:
 | `minUserLevel` | `'contributor'` |
 | `workflow` | Assigned workflow |
 | `directEdit` | Direct edit setting |
-| `primaryGroup` | Primary group |
-| `sharedGroups` | Shared groups |
+| `primaryGroup` | Owning group ID (`0` = none) |
+| `sharedGroups` | Shared group IDs. Cannot contain `primaryGroup`. |
 | `fields` | Field definitions keyed by name |
 
 Each entry in `news.fields` can include:

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach, beforeAll } from 'vitest';
-import { resolveLanguage, toTimestamp, decodeHtmlEntities, debugWarn, invalidateAllCaches, parseFileSize, normaliseBaseUrl, assertNotBrowser } from '../src/utils.js';
+import { resolveLanguage, toTimestamp, decodeHtmlEntities, debugWarn, invalidateAllCaches, parseFileSize, normaliseBaseUrl, assertNotBrowser, readPrimaryGroup, readSharedGroups, writePrimaryGroup, writeSharedGroups, assertGroupsValid } from '../src/utils.js';
 
 describe('resolveLanguage', () => {
   it('returns override when provided', () => {
@@ -362,5 +362,89 @@ describe('parseFileSize', () => {
   it('is case-insensitive', () => {
     expect(parseFileSize('2 kb')).toBe(2048);
     expect(parseFileSize('5 Mb')).toBe(5 * 1024 * 1024);
+  });
+});
+
+describe('group mapping helpers', () => {
+  describe('readPrimaryGroup', () => {
+    it('reads a direct id', () => {
+      expect(readPrimaryGroup({ id: 42 })).toBe(42);
+    });
+
+    it('prefers the nested group.id when present', () => {
+      expect(readPrimaryGroup({ id: 5, group: { id: 99 } })).toBe(99);
+    });
+
+    it('returns 0 for null id', () => {
+      expect(readPrimaryGroup({ id: null })).toBe(0);
+    });
+
+    it('returns 0 when undefined', () => {
+      expect(readPrimaryGroup(undefined)).toBe(0);
+    });
+  });
+
+  describe('readSharedGroups', () => {
+    it('maps an array of { id } to ids', () => {
+      expect(readSharedGroups([{ id: 1 }, { id: 2 }, { id: 3 }])).toEqual([1, 2, 3]);
+    });
+
+    it('returns an empty array when undefined', () => {
+      expect(readSharedGroups(undefined)).toEqual([]);
+    });
+
+    it('returns an empty array for an empty array', () => {
+      expect(readSharedGroups([])).toEqual([]);
+    });
+  });
+
+  describe('writePrimaryGroup', () => {
+    it('wraps a positive id', () => {
+      expect(writePrimaryGroup(42)).toEqual({ id: 42 });
+    });
+
+    it('maps 0 to null (no primary group)', () => {
+      expect(writePrimaryGroup(0)).toEqual({ id: null });
+    });
+  });
+
+  describe('writeSharedGroups', () => {
+    it('maps ids to an array of { id }', () => {
+      expect(writeSharedGroups([1, 2])).toEqual([{ id: 1 }, { id: 2 }]);
+    });
+
+    it('returns an empty array when undefined', () => {
+      expect(writeSharedGroups(undefined)).toEqual([]);
+    });
+
+    it('returns an empty array for an empty array', () => {
+      expect(writeSharedGroups([])).toEqual([]);
+    });
+  });
+});
+
+describe('assertGroupsValid', () => {
+  it('does nothing when sharedGroups does not contain primaryGroup', () => {
+    expect(() => assertGroupsValid(35, [34, 40])).not.toThrow();
+  });
+
+  it('does nothing when there is no primary group (0)', () => {
+    expect(() => assertGroupsValid(0, [34, 40])).not.toThrow();
+    expect(() => assertGroupsValid(0, [0])).not.toThrow();
+  });
+
+  it('does nothing when sharedGroups is empty or undefined', () => {
+    expect(() => assertGroupsValid(35, [])).not.toThrow();
+    expect(() => assertGroupsValid(35, undefined)).not.toThrow();
+  });
+
+  it('throws when sharedGroups contains the primaryGroup id', () => {
+    expect(() => assertGroupsValid(35, [34, 35])).toThrow(
+      'sharedGroups cannot contain the primaryGroup id (35)',
+    );
+  });
+
+  it('mentions both fields in the error message', () => {
+    expect(() => assertGroupsValid(7, [7])).toThrow(/primary \(owning\) group and a shared group/);
   });
 });

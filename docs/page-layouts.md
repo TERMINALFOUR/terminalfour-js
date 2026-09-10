@@ -22,6 +22,8 @@ A full page layout includes:
 | `fileExtension` | Output file extension |
 | `syntax` | Syntax such as `'HTML/XML'` |
 | `processor` | Processor such as `'handlebars'` |
+| `primaryGroup` | Owning group ID. `0` means no primary group (Global). |
+| `sharedGroups` | Array of group IDs the layout is shared with |
 
 ## Create a page layout
 
@@ -34,10 +36,34 @@ await t4.pageLayouts.create({
   syntax: 'HTML/XML',      // optional
   processor: 'handlebars', // optional; default: 'handlebars'
   fileExtension: 'html',   // optional
+  primaryGroup: 35,        // optional; owning group ID
+  sharedGroups: [34, 40],  // optional; group IDs to share with
 });
 ```
 
 Processor options are `'handlebars'`, `'t4-tags'`, and `'programmable-layouts'`. The default is `'handlebars'`.
+
+## Group and visibility
+
+`primaryGroup` is the layout's owning group and `sharedGroups` are the groups it is shared with. Both are read on `get()` and written on `save()`, `update()`, and `create()`. Set `primaryGroup` to `0` to remove the owning group (Global):
+
+```typescript
+const layout = await t4.pageLayouts.get(5);
+console.log(layout.primaryGroup); // 35
+console.log(layout.sharedGroups); // [34, 40]
+
+layout.primaryGroup = 0;   // remove from its group (Global)
+layout.sharedGroups = [];
+await layout.save();
+```
+
+Or through `update()`:
+
+```typescript
+await t4.pageLayouts.update(5, { primaryGroup: 35, sharedGroups: [34] });
+```
+
+`sharedGroups` cannot contain the `primaryGroup` id: a group cannot be both the owning group and a shared group. The SDK throws a clear error before sending the request (Terminalfour otherwise returns an opaque 500).
 
 ## Update a page layout
 

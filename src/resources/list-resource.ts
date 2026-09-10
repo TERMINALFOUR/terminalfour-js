@@ -1,7 +1,7 @@
 import { HttpClient } from '../http-client.js';
 import { resolveLanguage } from '../utils.js';
 import { LanguageOption } from '../types.js';
-import { decodeHtmlEntities } from '../utils.js';
+import { decodeHtmlEntities, readPrimaryGroup, readSharedGroups, writePrimaryGroup, writeSharedGroups, assertGroupsValid, RawPrimaryGroup } from '../utils.js';
 
 /** Raw list from GET /list/{language} */
 interface RawListSummary {
@@ -29,7 +29,7 @@ interface RawListDetail {
   language: string;
   isForcedLanguage?: boolean;
   isDefaultLanguage?: boolean;
-  primaryGroup?: { id: number | null; group?: { id: number } };
+  primaryGroup?: RawPrimaryGroup;
   sharedGroups?: Array<{ id: number }>;
   items: RawListItem[];
   [key: string]: unknown;
@@ -71,8 +71,8 @@ export class List {
     this.description = decodeHtmlEntities(raw.description ?? '');
     this.isForcedLanguage = raw.isForcedLanguage ?? false;
     this.isDefaultLanguage = raw.isDefaultLanguage ?? false;
-    this.primaryGroup = raw.primaryGroup?.group?.id ?? (raw.primaryGroup?.id as number) ?? 0;
-    this.sharedGroups = (raw.sharedGroups ?? []).map((g) => g.id);
+    this.primaryGroup = readPrimaryGroup(raw.primaryGroup);
+    this.sharedGroups = readSharedGroups(raw.sharedGroups);
     this.items = {};
     for (const item of (raw.items ?? []).sort((a, b) => a.sequence - b.sequence)) {
       const friendlyName = decodeHtmlEntities(item.name);
@@ -118,6 +118,7 @@ export class List {
     if (this.isForcedLanguage && this.isDefaultLanguage) {
       throw new Error('isForcedLanguage and isDefaultLanguage cannot both be true');
     }
+    assertGroupsValid(this.primaryGroup, this.sharedGroups);
     const items = Object.values(this.items).map((item, i) => ({
       id: String((item as unknown as { _rawId?: number })._rawId ?? 0),
       name: item.name,
@@ -133,8 +134,8 @@ export class List {
       description: this.description,
       isForcedLanguage: this.isForcedLanguage,
       isDefaultLanguage: this.isDefaultLanguage,
-      primaryGroup: { id: this.primaryGroup || 0 },
-      sharedGroups: this.sharedGroups.map((id) => ({ id })),
+      primaryGroup: writePrimaryGroup(this.primaryGroup),
+      sharedGroups: writeSharedGroups(this.sharedGroups),
       items,
     };
 
@@ -228,6 +229,7 @@ export class ListResource {
     if (data.isForcedLanguage && data.isDefaultLanguage) {
       throw new Error('isForcedLanguage and isDefaultLanguage cannot both be true');
     }
+    assertGroupsValid(data.primaryGroup ?? 0, data.sharedGroups);
 
     const language = resolveLanguage(options?.language, this.defaultLanguage);
 
@@ -249,8 +251,8 @@ export class ListResource {
         items,
         isForcedLanguage: data.isForcedLanguage ?? false,
         isDefaultLanguage: data.isDefaultLanguage ?? false,
-        sharedGroups: (data.sharedGroups ?? []).map((id) => ({ id })),
-        primaryGroup: { id: data.primaryGroup ?? 0 },
+        sharedGroups: writeSharedGroups(data.sharedGroups),
+        primaryGroup: writePrimaryGroup(data.primaryGroup ?? 0),
         sortType: 0,
       },
     });
