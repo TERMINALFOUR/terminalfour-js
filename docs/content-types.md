@@ -257,7 +257,7 @@ The check runs when you call `save()` or `update()`, not when you call `removeFi
 
 ### Deleting a system content type is always blocked
 
-`delete()` refuses to delete any system content type, with no exceptions — the Section Metadata and Extended User exemptions above do **not** apply here. Deleting a system content type outright (rather than editing its elements) can break instance-wide features, so there is no override:
+`delete()` refuses to delete **any** system content type, with no exceptions. Deleting a system content type outright (rather than editing its elements) can break instance-wide features, so there is no override:
 
 ```typescript
 await t4.contentTypes.delete(systemTypeId);
