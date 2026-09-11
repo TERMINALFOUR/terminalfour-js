@@ -1,6 +1,6 @@
 {
   "name": "@terminalfour/terminalfour-js",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "JavaScript / TypeScript SDK for the Terminalfour Web Services REST API",
   "keywords": [
     "terminalfour",

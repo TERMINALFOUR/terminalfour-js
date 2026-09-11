@@ -231,6 +231,8 @@ Delete a content type through the resource:
 await t4.contentTypes.delete(44);
 ```
 
+System content types cannot be deleted — see [System content types](#system-content-types) below.
+
 ## System content types
 
 System content types are managed by T4 and back core features. Removing or renaming their elements can break the instance, so the SDK blocks both on `save()` (and through `update({ removeFields })`):
@@ -249,9 +251,21 @@ On a system content type you can still:
 - Change an element's `maxSize`
 - Change the content type's `description` and any element's `description`
 
-Two system content types are exempt, because removing and renaming their elements is safe: the **Section Metadata** content type and the **Extended User** content type. On those two, removal and renaming work exactly like a regular content type.
+Two system content types are exempt from the element removal and renaming guard, because removing and renaming their elements is safe: the **Section Metadata** content type and the **Extended User** content type. On those two, removal and renaming work exactly like a regular content type.
 
 The check runs when you call `save()` or `update()`, not when you call `removeField()`. Because `removeField()` only stages the change in memory, nothing is sent to T4 when the guard blocks a save.
+
+### Deleting a system content type is always blocked
+
+`delete()` refuses to delete any system content type, with no exceptions — the Section Metadata and Extended User exemptions above do **not** apply here. Deleting a system content type outright (rather than editing its elements) can break instance-wide features, so there is no override:
+
+```typescript
+await t4.contentTypes.delete(systemTypeId);
+// Error: Cannot delete content type "..." (<id>) because it is a system
+// content type. Deleting system content types is not allowed.
+```
+
+`delete()` fetches the content type first to check its type; if it is a system content type, nothing is deleted.
 
 ## Manage content layouts
 
