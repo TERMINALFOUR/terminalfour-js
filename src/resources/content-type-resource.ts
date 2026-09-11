@@ -1066,8 +1066,27 @@ export class ContentTypeResource {
     return ct;
   }
 
-  /** Deletes a content type by ID. */
+  /**
+   * Deletes a content type by ID.
+   *
+   * System content types (`type === 30`) are managed by T4 and back core
+   * features; deleting one can break the instance, so this is blocked with a
+   * clear error. There is no override.
+   */
   async delete(id: number): Promise<void> {
+    const raw = await this.httpClient.request<ApiContentType>({
+      method: 'GET',
+      path: `/contenttype/${id}`,
+    });
+
+    if (raw.type === SYSTEM_CONTENT_TYPE) {
+      const name = decodeHtmlEntities(raw.alias || raw.name);
+      throw new Error(
+        `Cannot delete content type "${name}" (${id}) because it is a system content type. ` +
+        'Deleting system content types is not allowed.',
+      );
+    }
+
     await this.httpClient.request<void>({
       method: 'DELETE',
       path: `/contenttype/${id}`,
