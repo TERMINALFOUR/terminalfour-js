@@ -690,6 +690,48 @@ describe('ContentTypeResource', () => {
     expect(ct.directEdit).toBe(false);
   });
 
+  describe('contentTypes.delete()', () => {
+    it('deletes a regular content type (GET then DELETE)', async () => {
+      const calls: Array<{ method: string; path: string }> = [];
+      (http.request as ReturnType<typeof vi.fn>).mockImplementation(async (opts: { method: string; path: string }) => {
+        calls.push(opts);
+        if (opts.method === 'GET' && opts.path === '/contenttype/44') return { id: 44, name: 'Article', alias: 'Article', type: 10, contentTypeElements: [] };
+        if (opts.method === 'DELETE' && opts.path === '/contenttype/44') return undefined;
+        throw new Error(`Unexpected: ${opts.method} ${opts.path}`);
+      });
+
+      await resource.delete(44);
+
+      const deleteCall = calls.find((c) => c.method === 'DELETE');
+      expect(deleteCall).toBeDefined();
+      expect(deleteCall!.path).toBe('/contenttype/44');
+    });
+
+    it('blocks deleting a system content type (type 30) and sends no DELETE', async () => {
+      const calls: Array<{ method: string; path: string }> = [];
+      (http.request as ReturnType<typeof vi.fn>).mockImplementation(async (opts: { method: string; path: string }) => {
+        calls.push(opts);
+        if (opts.method === 'GET' && opts.path === '/contenttype/75') return { id: 75, name: 'Section Meta Data', alias: 'Section Meta Data', type: 30, contentTypeElements: [] };
+        if (opts.method === 'DELETE' && opts.path === '/contenttype/75') return undefined;
+        throw new Error(`Unexpected: ${opts.method} ${opts.path}`);
+      });
+
+      await expect(resource.delete(75)).rejects.toThrow(/system content type/i);
+
+      const deleteCall = calls.find((c) => c.method === 'DELETE');
+      expect(deleteCall).toBeUndefined();
+    });
+
+    it('names the content type in the block error', async () => {
+      (http.request as ReturnType<typeof vi.fn>).mockImplementation(async (opts: { method: string; path: string }) => {
+        if (opts.method === 'GET' && opts.path === '/contenttype/75') return { id: 75, name: 'Section Meta Data', alias: 'Section Meta Data', type: 30, contentTypeElements: [] };
+        throw new Error(`Unexpected: ${opts.method} ${opts.path}`);
+      });
+
+      await expect(resource.delete(75)).rejects.toThrow('Cannot delete content type "Section Meta Data" (75)');
+    });
+  });
+
   it('contentTypes.update() supports addFields', async () => {
     (http.request as ReturnType<typeof vi.fn>).mockImplementation(async (opts: { method: string; path: string }) => {
       if (opts.path === '/type/') return ELEMENT_TYPES;
