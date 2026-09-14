@@ -1,4 +1,5 @@
 import { HttpClient } from '../http-client.js';
+import { readPrimaryGroup, readSharedGroups, writePrimaryGroup, writeSharedGroups, assertGroupsValid, RawPrimaryGroup } from '../utils.js';
 
 /** SDK-friendly navigation type codes (consistent kebab-case) */
 export type NavigationType =
@@ -105,6 +106,8 @@ interface RawNavigationDetail {
   isPreviewModeEnabled: boolean;
   isCachingEnabled: boolean;
   date?: string;
+  primaryGroup?: RawPrimaryGroup;
+  sharedGroups?: Array<{ id: number }>;
   properties: Record<string, { value?: string; attribute: string; navigationPropertyID: number }>;
   [key: string]: unknown;
 }
@@ -1111,6 +1114,10 @@ export class NavigationObject {
   enabled: boolean;
   cachingEnabled: boolean;
   previewEnabled: boolean;
+  /** Owning group ID. 0 = no primary group (Global). */
+  primaryGroup: number;
+  /** Group IDs this navigation object is shared with. */
+  sharedGroups: number[];
   properties: Record<string, unknown>;
 
   private readonly _httpClient!: HttpClient;
@@ -1126,6 +1133,8 @@ export class NavigationObject {
     this.enabled = raw.isEnabled;
     this.cachingEnabled = raw.isCachingEnabled;
     this.previewEnabled = raw.isPreviewModeEnabled;
+    this.primaryGroup = readPrimaryGroup(raw.primaryGroup);
+    this.sharedGroups = readSharedGroups(raw.sharedGroups);
 
     // Convert properties to camelCase keys with string values
     const originalKeys: string[] = [];
@@ -1145,6 +1154,8 @@ export class NavigationObject {
 
   /** Persists current property values to the server via PUT. */
   async save(): Promise<void> {
+    assertGroupsValid(this.primaryGroup, this.sharedGroups);
+
     // Apply type-aware write transformation (coerce back to strings, derive hidden fields)
     const camelStringProps = transformPropertiesWrite(this.type, this.properties);
 
@@ -1166,6 +1177,8 @@ export class NavigationObject {
       isEnabled: this.enabled,
       isCachingEnabled: this.cachingEnabled,
       isPreviewModeEnabled: this.previewEnabled,
+      primaryGroup: writePrimaryGroup(this.primaryGroup),
+      sharedGroups: writeSharedGroups(this.sharedGroups),
       properties: apiProperties,
     };
 
@@ -1823,6 +1836,10 @@ export interface CreateNavigationData {
   description?: string;
   enabled?: boolean;
   previewEnabled?: boolean;
+  /** Owning group ID. 0 = no primary group (Global). Defaults to 0. */
+  primaryGroup?: number;
+  /** Group IDs to share this navigation object with. Defaults to none. */
+  sharedGroups?: number[];
   properties?: A2ZProperties | BreadcrumbsProperties | CssSelectorProperties | GenerateFileProperties | LanguageSwitcherProperties | PaginationProperties | PreviousNextProperties | SectionIteratorProperties | RelatedSectionBranchProperties | ReturnToIndexProperties | SectionMetaInfoProperties | TopStoriesProperties | SiteMapProperties | SectionDetailsProperties | RelatedContentProperties | LinkMenuProperties | PublishToOneFileProperties | TopContentProperties | KeywordSearchProperties | Record<string, unknown>;
 }
 
@@ -1837,6 +1854,10 @@ export interface UpdateNavigationData {
   enabled?: boolean;
   previewEnabled?: boolean;
   cachingEnabled?: boolean;
+  /** Owning group ID. 0 = no primary group (Global). */
+  primaryGroup?: number;
+  /** Group IDs to share this navigation object with. */
+  sharedGroups?: number[];
   properties?: A2ZProperties | BreadcrumbsProperties | CssSelectorProperties | GenerateFileProperties | LanguageSwitcherProperties | PaginationProperties | PreviousNextProperties | SectionIteratorProperties | RelatedSectionBranchProperties | ReturnToIndexProperties | SectionMetaInfoProperties | TopStoriesProperties | SiteMapProperties | SectionDetailsProperties | RelatedContentProperties | LinkMenuProperties | PublishToOneFileProperties | TopContentProperties | KeywordSearchProperties | Record<string, unknown>;
 }
 
@@ -1974,6 +1995,7 @@ export class NavigationResource {
     if (!data.name?.trim()) throw new Error('Navigation object name is required');
     if (!data.type) throw new Error('Navigation object type is required');
     if (!NAVIGATION_TYPE_NAMES[data.type]) throw new Error(`Unknown navigation type "${data.type}"`);
+    assertGroupsValid(data.primaryGroup ?? 0, data.sharedGroups);
 
     const apiType = SDK_TO_API[data.type];
     const properties = await this.buildProperties(data.type, (data.properties ?? {}) as Record<string, unknown>);
@@ -1985,8 +2007,8 @@ export class NavigationResource {
       name: data.name,
       description: data.description ?? '',
       navigationType: apiType,
-      sharedGroups: [],
-      primaryGroup: { id: 0 },
+      sharedGroups: writeSharedGroups(data.sharedGroups),
+      primaryGroup: writePrimaryGroup(data.primaryGroup ?? 0),
       properties,
     };
 
@@ -2031,6 +2053,8 @@ export class NavigationResource {
     if (data.enabled !== undefined) nav.enabled = data.enabled;
     if (data.previewEnabled !== undefined) nav.previewEnabled = data.previewEnabled;
     if (data.cachingEnabled !== undefined) nav.cachingEnabled = data.cachingEnabled;
+    if (data.primaryGroup !== undefined) nav.primaryGroup = data.primaryGroup;
+    if (data.sharedGroups !== undefined) nav.sharedGroups = data.sharedGroups;
 
     // Merge properties rather than replace — callers pass only what changes
     if (data.properties !== undefined) {

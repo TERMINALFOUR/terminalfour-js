@@ -34,6 +34,8 @@ console.log(navigation.type);            // 'a-to-z'
 console.log(navigation.enabled);         // true
 console.log(navigation.cachingEnabled);  // false
 console.log(navigation.previewEnabled);  // true
+console.log(navigation.primaryGroup);    // 1 (owning group ID; 0 = Global)
+console.log(navigation.sharedGroups);    // [34, 40]
 console.log(navigation.properties);      // properties vary by type
 ```
 
@@ -46,6 +48,8 @@ Type-specific properties use JavaScript booleans, numbers, and arrays. The SDK o
 | `enabled` | yes | Whether the navigation is active |
 | `cachingEnabled` | yes | Whether output caching is enabled |
 | `previewEnabled` | yes | Whether preview mode is enabled |
+| `primaryGroup` | yes | Owning group ID. `0` means no primary group (Global). |
+| `sharedGroups` | yes | Array of group IDs the object is shared with |
 | `properties` | yes | Type-specific configuration |
 
 ## Create a navigation object
@@ -63,7 +67,16 @@ await t4.navigation.create({
 });
 ```
 
-Only `type` and `name` are required. Properties have default values.
+Only `type` and `name` are required. Properties have default values. `create()` also accepts optional `primaryGroup` and `sharedGroups`:
+
+```typescript
+await t4.navigation.create({
+  type: 'breadcrumbs',
+  name: 'Main Breadcrumbs',
+  primaryGroup: 35,       // optional; owning group ID
+  sharedGroups: [34, 40], // optional; group IDs to share with
+});
+```
 
 ## Update a navigation object
 
@@ -98,6 +111,22 @@ navigation.enabled = false;
 navigation.properties.beforeHtml = '<div>';
 await navigation.save();
 ```
+
+## Group and visibility
+
+`primaryGroup` is the object's owning group and `sharedGroups` are the groups it is shared with. Both are read on `get()` and written on `save()`, `update()`, and `create()`. Set `primaryGroup` to `0` to remove the owning group (Global):
+
+```typescript
+const navigation = await t4.navigation.get(181);
+navigation.primaryGroup = 0;   // remove from its group (Global)
+navigation.sharedGroups = [];
+await navigation.save();
+
+// Or through update()
+await t4.navigation.update(181, { primaryGroup: 35, sharedGroups: [34] });
+```
+
+`sharedGroups` cannot contain the `primaryGroup` id: a group cannot be both the owning group and a shared group. The SDK throws a clear error before sending the request (Terminalfour otherwise returns an opaque 500).
 
 ## Delete a navigation object
 

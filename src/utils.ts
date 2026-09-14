@@ -184,6 +184,62 @@ export function flattenGroups(
 }
 
 
+/**
+ * Group/visibility mapping helpers.
+ *
+ * The T4 API represents an asset's owning group as `primaryGroup` (an object,
+ * where the id may be direct or nested under `group`) and its shared groups as
+ * `sharedGroups` (an array of `{ id }`). The SDK exposes these as a plain
+ * `primaryGroup: number` (0 = none) and `sharedGroups: number[]`. These helpers
+ * centralise the read/write mapping so content types, lists, page layouts, and
+ * navigation objects all handle groups identically.
+ */
+
+/** Raw shape of the API `primaryGroup` field. */
+export interface RawPrimaryGroup {
+  id: number | null;
+  group?: { id: number };
+}
+
+/** Reads the API `primaryGroup` object into a plain group id (0 = none). */
+export function readPrimaryGroup(raw?: RawPrimaryGroup): number {
+  return raw?.group?.id ?? raw?.id ?? 0;
+}
+
+/** Reads the API `sharedGroups` array into a plain array of group ids. */
+export function readSharedGroups(raw?: Array<{ id: number }>): number[] {
+  return (raw ?? []).map((g) => g.id);
+}
+
+/** Writes a plain group id back to the API `primaryGroup` shape (0/falsy = none). */
+export function writePrimaryGroup(id: number): { id: number | null } {
+  return { id: id || null };
+}
+
+/** Writes a plain array of group ids back to the API `sharedGroups` shape. */
+export function writeSharedGroups(ids?: number[]): Array<{ id: number }> {
+  return (ids ?? []).map((id) => ({ id }));
+}
+
+/**
+ * Validates that group/visibility values are acceptable to the T4 API before a
+ * write. The API returns an opaque 500 when `sharedGroups` contains the same id
+ * as `primaryGroup` (a group cannot be both the owner and a shared group), so we
+ * catch it here with a clear message. A `primaryGroup` of 0 means "no owning
+ * group" and is never a conflict.
+ */
+export function assertGroupsValid(primaryGroup: number, sharedGroups?: number[]): void {
+  if (!primaryGroup) return;
+  if ((sharedGroups ?? []).includes(primaryGroup)) {
+    throw new Error(
+      `sharedGroups cannot contain the primaryGroup id (${primaryGroup}). ` +
+      'A group cannot be both the primary (owning) group and a shared group. ' +
+      'Remove it from sharedGroups or choose a different primaryGroup.',
+    );
+  }
+}
+
+
 /** Accepted file input: a file path, URL, Blob, ReadableStream, or { file, filename } object */
 export type FileInput = string | Blob | NodeJS.ReadableStream | { file: string | Blob | NodeJS.ReadableStream; filename?: string };
 

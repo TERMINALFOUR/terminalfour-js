@@ -1,6 +1,6 @@
 import { HttpClient } from '../http-client.js';
 import { ContentTypeData, ContentTypeFieldDef } from '../types.js';
-import { decodeHtmlEntities, AUTH_LEVEL_MAP, AUTH_LEVEL_REVERSE, debugWarn, DEFAULT_CACHE_TTL, getCacheEpoch } from '../utils.js';
+import { decodeHtmlEntities, AUTH_LEVEL_MAP, AUTH_LEVEL_REVERSE, debugWarn, DEFAULT_CACHE_TTL, getCacheEpoch, readPrimaryGroup, readSharedGroups, writePrimaryGroup, writeSharedGroups, assertGroupsValid, RawPrimaryGroup } from '../utils.js';
 
 /** Raw content type element from the API response */
 interface ApiContentTypeElement {
@@ -38,7 +38,7 @@ interface ApiContentType {
   minAuthLevel?: number;
   workflow?: number;
   sharedGroups?: Array<{ id: number }>;
-  primaryGroup?: { id: number | null; group?: { id: number } };
+  primaryGroup?: RawPrimaryGroup;
   enableDirectEdit?: boolean;
   elementIdforFilename?: number;
   contentTypeElements?: ApiContentTypeElement[];
@@ -104,8 +104,8 @@ function mapContentType(raw: ApiContentType, typeMap: Map<number, string>, edito
       description: decodeHtmlEntities(raw.description ?? ''),
       minUserLevel: AUTH_LEVEL_MAP[raw.minAuthLevel ?? 2] ?? `unknown (${raw.minAuthLevel})`,
       workflow: raw.workflow ?? 0,
-      sharedGroups: (raw.sharedGroups ?? []).map((g) => g.id),
-      primaryGroup: raw.primaryGroup?.group?.id ?? raw.primaryGroup?.id ?? 0,
+      sharedGroups: readSharedGroups(raw.sharedGroups),
+      primaryGroup: readPrimaryGroup(raw.primaryGroup),
       directEdit: raw.enableDirectEdit ?? true,
       fields: fieldsRecord,
     },
@@ -790,6 +790,8 @@ export class ContentType implements ContentTypeData {
 
   /** Persists current property values to the server via PUT. */
   async save(): Promise<void> {
+    assertGroupsValid(this.primaryGroup, this.sharedGroups);
+
     const authLevel = String(AUTH_LEVEL_REVERSE[this.minUserLevel] ?? this._rawData.minAuthLevel ?? 2);
 
     // Sync field changes back to raw contentTypeElements
@@ -865,8 +867,8 @@ export class ContentType implements ContentTypeData {
       minAuthLevel: authLevel,
       workflow: String(this.workflow),
       enableDirectEdit: this.directEdit,
-      sharedGroups: this.sharedGroups.map((id) => ({ id })),
-      primaryGroup: { id: this.primaryGroup || null },
+      sharedGroups: writeSharedGroups(this.sharedGroups),
+      primaryGroup: writePrimaryGroup(this.primaryGroup),
       contentTypeElements: rawElements,
     } as Record<string, unknown>;
 
@@ -1158,6 +1160,7 @@ export class ContentTypeResource {
     if (!data.elements?.length) {
       throw new Error('Content type must have at least one element');
     }
+    assertGroupsValid(data.primaryGroup ?? 0, data.sharedGroups);
 
     // Validate useAsFilename constraints
     const filenameElements = data.elements.filter((el) => el.useAsFilename);
@@ -1293,8 +1296,8 @@ export class ContentTypeResource {
         warningMessage: '',
         elementIdforFilename: elementIdForFilename,
         conditionals: [],
-        sharedGroups: (data.sharedGroups ?? []).map((id) => ({ id })),
-        primaryGroup: { id: data.primaryGroup ?? 0 },
+        sharedGroups: writeSharedGroups(data.sharedGroups),
+        primaryGroup: writePrimaryGroup(data.primaryGroup ?? 0),
         contentTypeElements,
       },
     });

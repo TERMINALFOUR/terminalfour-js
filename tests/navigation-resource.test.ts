@@ -2676,4 +2676,146 @@ describe('NavigationResource', () => {
       expect((putCall![0] as { path: string }).path).toBe('/navigation/181');
     });
   });
+
+  describe('group / visibility', () => {
+    function mockGetAndPut() {
+      (http.request as ReturnType<typeof vi.fn>).mockImplementation(async (opts: { method: string; path: string }) => {
+        if (opts.method === 'GET' && opts.path === '/navigation/181') return rawA2zDetail;
+        if (opts.method === 'PUT' && opts.path === '/navigation/181') return undefined;
+        throw new Error(`Unexpected: ${opts.method} ${opts.path}`);
+      });
+    }
+
+    function putBody() {
+      const putCall = (http.request as ReturnType<typeof vi.fn>).mock.calls.find(
+        (c: unknown[]) => (c[0] as { method: string }).method === 'PUT',
+      );
+      expect(putCall).toBeDefined();
+      return (putCall![0] as { body: Record<string, unknown> }).body;
+    }
+
+    it('get() reads primaryGroup and sharedGroups', async () => {
+      (http.request as ReturnType<typeof vi.fn>).mockResolvedValue({
+        ...rawA2zDetail,
+        primaryGroup: { id: 1, name: 'Sample Site' },
+        sharedGroups: [{ id: 34 }, { id: 40 }],
+      });
+
+      const nav = await resource.get(181);
+      expect(nav.primaryGroup).toBe(1);
+      expect(nav.sharedGroups).toEqual([34, 40]);
+    });
+
+    it('get() defaults to 0 / [] when groups are absent', async () => {
+      const { primaryGroup, sharedGroups, ...noGroups } = rawA2zDetail;
+      void primaryGroup; void sharedGroups;
+      (http.request as ReturnType<typeof vi.fn>).mockResolvedValue(noGroups);
+
+      const nav = await resource.get(181);
+      expect(nav.primaryGroup).toBe(0);
+      expect(nav.sharedGroups).toEqual([]);
+    });
+
+    it('save() writes primaryGroup and sharedGroups in API shape', async () => {
+      mockGetAndPut();
+
+      const nav = await resource.get(181);
+      nav.primaryGroup = 35;
+      nav.sharedGroups = [34, 40];
+      await nav.save();
+
+      const body = putBody();
+      expect(body.primaryGroup).toEqual({ id: 35 });
+      expect(body.sharedGroups).toEqual([{ id: 34 }, { id: 40 }]);
+    });
+
+    it('save() writes { id: null } when primaryGroup is cleared to 0', async () => {
+      mockGetAndPut();
+
+      const nav = await resource.get(181);
+      nav.primaryGroup = 0;
+      await nav.save();
+
+      const body = putBody();
+      expect(body.primaryGroup).toEqual({ id: null });
+    });
+
+    it('update() sets primaryGroup and sharedGroups', async () => {
+      mockGetAndPut();
+
+      const nav = await resource.update(181, { primaryGroup: 35, sharedGroups: [34] });
+      expect(nav.primaryGroup).toBe(35);
+      expect(nav.sharedGroups).toEqual([34]);
+
+      const body = putBody();
+      expect(body.primaryGroup).toEqual({ id: 35 });
+      expect(body.sharedGroups).toEqual([{ id: 34 }]);
+    });
+
+    it('create() sends primaryGroup and sharedGroups from input', async () => {
+      const createResponse = {
+        id: 271, name: 'Grouped A-Z', description: '',
+        navigationType: 'a2z', isEnabled: true, isPreviewModeEnabled: true, isCachingEnabled: false,
+        sharedGroups: [{ id: 34 }], primaryGroup: { id: 35, name: 'Group A' },
+        properties: {},
+      };
+      (http.request as ReturnType<typeof vi.fn>).mockResolvedValue(createResponse);
+
+      const nav = await resource.create({
+        type: 'a-to-z',
+        name: 'Grouped A-Z',
+        primaryGroup: 35,
+        sharedGroups: [34],
+      });
+
+      expect(nav.primaryGroup).toBe(35);
+      expect(nav.sharedGroups).toEqual([34]);
+
+      const postCall = (http.request as ReturnType<typeof vi.fn>).mock.calls.find(
+        (c: unknown[]) => (c[0] as { method: string }).method === 'POST',
+      );
+      const body = (postCall![0] as { body: Record<string, unknown> }).body;
+      expect(body.primaryGroup).toEqual({ id: 35 });
+      expect(body.sharedGroups).toEqual([{ id: 34 }]);
+    });
+
+    it('create() defaults to no group when not provided', async () => {
+      const createResponse = {
+        id: 272, name: 'Ungrouped', description: '',
+        navigationType: 'a2z', isEnabled: true, isPreviewModeEnabled: true, isCachingEnabled: false,
+        sharedGroups: [], primaryGroup: { id: 0, name: '' },
+        properties: {},
+      };
+      (http.request as ReturnType<typeof vi.fn>).mockResolvedValue(createResponse);
+
+      await resource.create({ type: 'a-to-z', name: 'Ungrouped' });
+
+      const postCall = (http.request as ReturnType<typeof vi.fn>).mock.calls.find(
+        (c: unknown[]) => (c[0] as { method: string }).method === 'POST',
+      );
+      const body = (postCall![0] as { body: Record<string, unknown> }).body;
+      expect(body.primaryGroup).toEqual({ id: null });
+      expect(body.sharedGroups).toEqual([]);
+    });
+
+    it('save() throws when sharedGroups contains primaryGroup, without a PUT', async () => {
+      mockGetAndPut();
+
+      const nav = await resource.get(181);
+      nav.primaryGroup = 35;
+      nav.sharedGroups = [34, 35];
+      await expect(nav.save()).rejects.toThrow('sharedGroups cannot contain the primaryGroup id (35)');
+
+      const putCall = (http.request as ReturnType<typeof vi.fn>).mock.calls.find(
+        (c: unknown[]) => (c[0] as { method: string }).method === 'PUT',
+      );
+      expect(putCall).toBeUndefined();
+    });
+
+    it('create() throws when sharedGroups contains primaryGroup', async () => {
+      await expect(
+        resource.create({ type: 'a-to-z', name: 'Bad', primaryGroup: 35, sharedGroups: [35] }),
+      ).rejects.toThrow('sharedGroups cannot contain the primaryGroup id (35)');
+    });
+  });
 });
