@@ -753,6 +753,90 @@ describe('ContentTypeResource', () => {
     expect(names).toContain('Name');
   });
 
+  describe('contentTypes.update() updateFields', () => {
+    const ctForUpdate = () => ({
+      ...fullContentType,
+      contentTypeElements: [
+        { id: 1, contentTypeID: 343, name: 'Name', description: 'The name', type: 1, maxSize: 80, compulsory: true, listId: 0, sequence: 1, alias: 'Name', shown: true },
+        { id: 2, contentTypeID: 343, name: 'Title', description: 'The title', type: 1, maxSize: 100, compulsory: false, listId: 0, sequence: 2, alias: 'Title', shown: true },
+      ],
+    });
+
+    const mockFor = (getResponse: unknown) => {
+      (http.request as ReturnType<typeof vi.fn>).mockImplementation(async (opts: { method: string; path: string }) => {
+        if (opts.path === '/type/') return ELEMENT_TYPES;
+        if (opts.path === '/htmlEditor') return HTML_EDITORS;
+        if (opts.method === 'GET' && opts.path === '/contenttype/343') return getResponse;
+        if (opts.method === 'PUT' && opts.path === '/contenttype/343') return undefined;
+        throw new Error(`Unexpected: ${opts.method} ${opts.path}`);
+      });
+    };
+
+    const putBody = () => {
+      const putCall = (http.request as ReturnType<typeof vi.fn>).mock.calls.find(
+        (c: unknown[]) => (c[0] as { method: string }).method === 'PUT',
+      );
+      return (putCall![0] as { body: { contentTypeElements: Array<Record<string, unknown>> } }).body;
+    };
+
+    it('increases an existing element maxSize and writes it in the PUT body', async () => {
+      mockFor(ctForUpdate());
+
+      const ct = await resource.update(343, { updateFields: [{ name: 'Title', maxSize: 500 }] });
+
+      expect(ct.fields['Title'].maxSize).toBe(500);
+      const titleEl = putBody().contentTypeElements.find((el) => el.name === 'Title');
+      expect(titleEl!.maxSize).toBe(500);
+    });
+
+    it('updates description, required and shown on an existing element', async () => {
+      mockFor(ctForUpdate());
+
+      const ct = await resource.update(343, {
+        updateFields: [{ name: 'Title', description: 'New title desc', required: true, shown: false }],
+      });
+
+      expect(ct.fields['Title'].description).toBe('New title desc');
+      expect(ct.fields['Title'].required).toBe(true);
+      expect(ct.fields['Title'].shown).toBe(false);
+
+      const titleEl = putBody().contentTypeElements.find((el) => el.name === 'Title');
+      expect(titleEl!.description).toBe('New title desc');
+      expect(titleEl!.compulsory).toBe(true);
+      expect(titleEl!.shown).toBe(false);
+    });
+
+    it('leaves omitted properties unchanged', async () => {
+      mockFor(ctForUpdate());
+
+      const ct = await resource.update(343, { updateFields: [{ name: 'Title', maxSize: 250 }] });
+
+      expect(ct.fields['Title'].maxSize).toBe(250);
+      // description untouched
+      expect(ct.fields['Title'].description).toBe('The title');
+      // other field untouched
+      expect(ct.fields['Name'].maxSize).toBe(80);
+    });
+
+    it('throws when the named field does not exist and sends no PUT', async () => {
+      const calls: Array<{ method: string; path: string }> = [];
+      (http.request as ReturnType<typeof vi.fn>).mockImplementation(async (opts: { method: string; path: string }) => {
+        calls.push(opts);
+        if (opts.path === '/type/') return ELEMENT_TYPES;
+        if (opts.path === '/htmlEditor') return HTML_EDITORS;
+        if (opts.method === 'GET' && opts.path === '/contenttype/343') return ctForUpdate();
+        if (opts.method === 'PUT' && opts.path === '/contenttype/343') return undefined;
+        throw new Error(`Unexpected: ${opts.method} ${opts.path}`);
+      });
+
+      await expect(
+        resource.update(343, { updateFields: [{ name: 'Nonexistent', maxSize: 500 }] }),
+      ).rejects.toThrow('Cannot update field "Nonexistent" because it does not exist');
+
+      expect(calls.find((c) => c.method === 'PUT')).toBeUndefined();
+    });
+  });
+
   const ctWithElements = () => ({
     ...fullContentType,
     contentTypeElements: [
