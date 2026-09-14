@@ -1043,6 +1043,19 @@ export class ContentTypeResource {
         maxRepeats?: number;
       };
     }>;
+    /**
+     * Existing fields to modify, matched by `name`. Only the provided
+     * properties are changed; omitted ones are left as-is. Use this to change
+     * an element's length (`maxSize`), description, or its `required`/`shown`
+     * flags. Throws if a named field does not exist on the content type.
+     */
+    updateFields?: Array<{
+      name: string;
+      maxSize?: number;
+      description?: string;
+      required?: boolean;
+      shown?: boolean;
+    }>;
     /** Field names to remove from the content type */
     removeFields?: string[];
   }): Promise<ContentType> {
@@ -1054,6 +1067,18 @@ export class ContentTypeResource {
     if (data.directEdit !== undefined) ct.directEdit = data.directEdit;
     if (data.sharedGroups !== undefined) ct.sharedGroups = data.sharedGroups;
     if (data.primaryGroup !== undefined) ct.primaryGroup = data.primaryGroup;
+    if (data.updateFields) {
+      for (const change of data.updateFields) {
+        const field = ct.fields[change.name];
+        if (!field) {
+          throw new Error(`Cannot update field "${change.name}" because it does not exist on content type "${ct.name}".`);
+        }
+        if (change.maxSize !== undefined) field.maxSize = change.maxSize;
+        if (change.description !== undefined) field.description = change.description;
+        if (change.required !== undefined) field.required = change.required;
+        if (change.shown !== undefined) field.shown = change.shown;
+      }
+    }
     if (data.removeFields) {
       for (const fieldName of data.removeFields) {
         ct.removeField(fieldName);

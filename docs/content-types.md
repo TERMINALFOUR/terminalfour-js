@@ -167,6 +167,21 @@ await t4.contentTypes.update(44, {
 });
 ```
 
+Change properties of existing fields with `updateFields`. Fields are matched by `name`, and only the properties you supply are changed — anything you omit is left as-is. This is how you increase an element's length (`maxSize`):
+
+```typescript
+await t4.contentTypes.update(44, {
+  updateFields: [
+    { name: 'Title', maxSize: 500 },
+    { name: 'Summary', description: 'Short teaser', required: true, shown: false },
+  ],
+});
+```
+
+`updateFields` can change `maxSize`, `description`, `required`, and `shown`. It throws if a named field does not exist on the content type, and (like the other field operations) nothing is sent to T4 when it throws. To change a field's *type* or *name*, remove it and add a new one instead.
+
+`updateFields`, `removeFields`, and `addFields` can be combined in a single call; updates are applied first, then removals, then additions.
+
 ### Mutable item
 
 ```typescript
