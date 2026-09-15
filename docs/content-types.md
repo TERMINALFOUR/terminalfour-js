@@ -167,6 +167,8 @@ await t4.contentTypes.update(44, {
 });
 ```
 
+> **Warning:** Removing a field deletes that element's content from every content item using this content type, and it cannot be recovered. Only remove a field when you're certain the data is no longer needed. To change a field's length, description, or name, use `updateFields` rather than removing and re-adding.
+
 Change properties of existing fields with `updateFields`. Fields are matched by `name`, and only the properties you supply are changed — anything you omit is left as-is. This is how you increase an element's length (`maxSize`):
 
 ```typescript
@@ -191,7 +193,7 @@ await t4.contentTypes.update(44, {
 
 After a rename, the returned content type is addressable by the new name (`ct.fields['Headline']`); the old key no longer exists.
 
-`updateFields` can change `maxSize`, `description`, `required`, `shown`, and `newName` (rename). It throws if a named field does not exist on the content type, and (like the other field operations) nothing is sent to T4 when it throws. Renaming an element on a system content type is blocked, except on the Section Meta Data and Extended User types (the same rule that applies to renames through the mutable pattern). To change a field's *type*, remove it and add a new one instead.
+`updateFields` can change `maxSize`, `description`, `required`, `shown`, and `newName` (rename). It throws if a named field does not exist on the content type, and (like the other field operations) nothing is sent to T4 when it throws. Renaming an element on a system content type is blocked, except on the Section Meta Data and Extended User types (the same rule that applies to renames through the mutable pattern). It's currently not possible to change a field's *type*.
 
 `updateFields`, `removeFields`, and `addFields` can be combined in a single call; updates are applied first, then removals, then additions.
 
@@ -252,6 +254,8 @@ await contentType.addField({
 contentType.removeField('Old Field');
 await contentType.save();
 ```
+
+> **Warning:** `removeField()` deletes the element's content from every content item using this content type once you `save()`, and it cannot be recovered. Prefer `updateFields` (or mutating the field directly) to change a field's length, description, or name.
 
 Delete a content type through the resource:
 
