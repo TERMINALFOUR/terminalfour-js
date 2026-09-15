@@ -178,7 +178,20 @@ await t4.contentTypes.update(44, {
 });
 ```
 
-`updateFields` can change `maxSize`, `description`, `required`, and `shown`. It throws if a named field does not exist on the content type, and (like the other field operations) nothing is sent to T4 when it throws. To change a field's *type* or *name*, remove it and add a new one instead.
+Rename an existing element with `newName`. The field is matched by its current `name`, and you can rename and change other properties in the same entry:
+
+```typescript
+await t4.contentTypes.update(44, {
+  updateFields: [
+    { name: 'Title', newName: 'Headline' },
+    { name: 'Summary', newName: 'Teaser', maxSize: 300 },
+  ],
+});
+```
+
+After a rename, the returned content type is addressable by the new name (`ct.fields['Headline']`); the old key no longer exists.
+
+`updateFields` can change `maxSize`, `description`, `required`, `shown`, and `newName` (rename). It throws if a named field does not exist on the content type, and (like the other field operations) nothing is sent to T4 when it throws. Renaming an element on a system content type is blocked, except on the Section Meta Data and Extended User types (the same rule that applies to renames through the mutable pattern). To change a field's *type*, remove it and add a new one instead.
 
 `updateFields`, `removeFields`, and `addFields` can be combined in a single call; updates are applied first, then removals, then additions.
 
