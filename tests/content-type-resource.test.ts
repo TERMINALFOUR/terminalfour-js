@@ -835,6 +835,36 @@ describe('ContentTypeResource', () => {
 
       expect(calls.find((c) => c.method === 'PUT')).toBeUndefined();
     });
+
+    it('renames an existing element via newName and writes the new alias in the PUT body', async () => {
+      mockFor(ctForUpdate());
+
+      const ct = await resource.update(343, { updateFields: [{ name: 'Title', newName: 'Headline' }] });
+
+      // The field is renamed on the returned model
+      expect(ct.fields['Headline']).toBeDefined();
+      expect(ct.fields['Headline'].name).toBe('Headline');
+
+      // The PUT body carries the new alias on the same element (id 2)
+      const renamedEl = putBody().contentTypeElements.find((el) => el.id === 2);
+      expect(renamedEl!.alias).toBe('Headline');
+    });
+
+    it('renames and changes other properties in the same entry', async () => {
+      mockFor(ctForUpdate());
+
+      const ct = await resource.update(343, {
+        updateFields: [{ name: 'Title', newName: 'Headline', maxSize: 300, required: true }],
+      });
+
+      expect(ct.fields['Headline'].maxSize).toBe(300);
+      expect(ct.fields['Headline'].required).toBe(true);
+
+      const renamedEl = putBody().contentTypeElements.find((el) => el.id === 2);
+      expect(renamedEl!.alias).toBe('Headline');
+      expect(renamedEl!.maxSize).toBe(300);
+      expect(renamedEl!.compulsory).toBe(true);
+    });
   });
 
   const ctWithElements = () => ({
@@ -1195,6 +1225,43 @@ describe('ContentTypeResource', () => {
       );
       expect(configCall).toBeUndefined();
       expect(credsCall).toBeUndefined();
+    });
+
+    it('blocks renaming an element on a system content type via update(updateFields.newName) and sends no PUT', async () => {
+      const calls: Array<{ method: string; path: string }> = [];
+      (http.request as ReturnType<typeof vi.fn>).mockImplementation(async (opts: { method: string; path: string }) => {
+        calls.push(opts);
+        if (opts.path === '/type/') return ELEMENT_TYPES;
+        if (opts.path === '/htmlEditor') return HTML_EDITORS;
+        if (opts.method === 'GET' && opts.path === '/contenttype/900') return systemCt(900);
+        if (opts.path === '/config/hierarchy.metaDataContentType') return SECTION_META_CONFIG;
+        if (opts.path === '/userSearch/credentials') return { userExtensibleObjectID: 420 };
+        if (opts.method === 'PUT' && opts.path === '/contenttype/900') return undefined;
+        throw new Error(`Unexpected: ${opts.method} ${opts.path}`);
+      });
+
+      await expect(
+        resource.update(900, { updateFields: [{ name: 'Title', newName: 'Headline' }] }),
+      ).rejects.toThrow(/rename.*system content type/i);
+
+      expect(calls.find((c) => c.method === 'PUT')).toBeUndefined();
+    });
+
+    it('allows renaming an element via update(updateFields.newName) on the exempt Section Meta Data type', async () => {
+      // Section Meta Data content type ID is 75 (from SECTION_META_CONFIG)
+      (http.request as ReturnType<typeof vi.fn>).mockImplementation(async (opts: { method: string; path: string }) => {
+        if (opts.path === '/type/') return ELEMENT_TYPES;
+        if (opts.path === '/htmlEditor') return HTML_EDITORS;
+        if (opts.method === 'GET' && opts.path === '/contenttype/75') return systemCt(75);
+        if (opts.path === '/config/hierarchy.metaDataContentType') return SECTION_META_CONFIG;
+        if (opts.path === '/userSearch/credentials') return { userExtensibleObjectID: 420 };
+        if (opts.method === 'PUT' && opts.path === '/contenttype/75') return undefined;
+        throw new Error(`Unexpected: ${opts.method} ${opts.path}`);
+      });
+
+      const ct = await resource.update(75, { updateFields: [{ name: 'Title', newName: 'Headline' }] });
+
+      expect(ct.fields['Headline']).toBeDefined();
     });
   });
 
