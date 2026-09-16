@@ -1046,11 +1046,15 @@ export class ContentTypeResource {
     /**
      * Existing fields to modify, matched by `name`. Only the provided
      * properties are changed; omitted ones are left as-is. Use this to change
-     * an element's length (`maxSize`), description, or its `required`/`shown`
-     * flags. Throws if a named field does not exist on the content type.
+     * an element's length (`maxSize`), description, its `required`/`shown`
+     * flags, or to rename it with `newName`. Throws if a named field does not
+     * exist on the content type. Renaming an element on a system content type
+     * is blocked (except the Section Meta Data and Extended User types).
      */
     updateFields?: Array<{
       name: string;
+      /** New name for the element. Renames are blocked on system content types. */
+      newName?: string;
       maxSize?: number;
       description?: string;
       required?: boolean;
@@ -1077,6 +1081,14 @@ export class ContentTypeResource {
         if (change.description !== undefined) field.description = change.description;
         if (change.required !== undefined) field.required = change.required;
         if (change.shown !== undefined) field.shown = change.shown;
+        // Rename last: save() detects the change against the element's _elementId
+        // link and applies the system content type rename guard. Re-key the
+        // fields record so the returned model is addressable by the new name.
+        if (change.newName !== undefined && change.newName !== change.name) {
+          field.name = change.newName;
+          ct.fields[change.newName] = field;
+          delete ct.fields[change.name];
+        }
       }
     }
     if (data.removeFields) {
