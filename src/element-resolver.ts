@@ -217,11 +217,131 @@ export class ElementResolver {
         return this.resolveKeywordSelector(value, element.listId, language);
 
       case 'Repeater':
-        return value; // handled separately in buildElements
+        return value; // handled separately in buildElements / buildRepeaterValue
 
       default:
         return value;
     }
+  }
+
+  /**
+   * Builds the T4 elements map from developer-friendly field names and values.
+   * Resolves list values, dates, repeaters, etc. automatically.
+   *
+   * Shared by both write paths: `ContentResource` (create/update) and
+   * `ContentItem.save()`. Keeping a single implementation here prevents the two
+   * paths from drifting — the reason repeaters previously only resolved on one
+   * of them.
+   */
+  async buildElements(
+    fields: Record<string, unknown>,
+    elements: TemplateElement[],
+    name: string,
+    language: string,
+    sectionId: number,
+    context?: ResolveContext,
+  ): Promise<Record<string, unknown>> {
+    const result: Record<string, unknown> = {};
+
+    // Name element
+    const nameEl = elements.find((el) => el.name.toLowerCase() === 'name');
+    if (nameEl) {
+      result[`${nameEl.name}#${nameEl.id}:${nameEl.type}`] = name;
+    }
+
+    for (const [fieldName, value] of Object.entries(fields)) {
+      const fieldLower = fieldName.toLowerCase();
+      const element = elements.find(
+        (el) => el.name.toLowerCase() === fieldLower
+          || (el.alias && el.alias.toLowerCase() === fieldLower),
+      );
+      if (!element) {
+        const validNames = elements
+          .filter((el) => el.name.toLowerCase() !== 'name')
+          .map((el) => `"${el.alias || el.name}"`)
+          .join(', ');
+        throw new Error(
+          `Unknown field "${fieldName}" on this content type. Valid fields are: ${validNames}`,
+        );
+      }
+
+      const key = `${element.name}#${element.id}:${element.type}`;
+
+      // Repeater — special handling (no maxSize validation)
+      const typeName = await this.typeRegistry.getNameById(element.type);
+      if (typeName === 'Repeater' && Array.isArray(value)) {
+        result[key] = await this.buildRepeaterValue(
+          value as RepeaterInput[],
+          element,
+          language,
+          sectionId,
+        );
+        continue;
+      }
+
+      const resolved = await this.resolveValue(value, element, language, elements, context);
+
+      // Validate maxSize on the resolved value (what actually gets sent to the API)
+      if (element.maxSize) {
+        const resolvedStr = String(resolved ?? '');
+        if (resolvedStr.length > element.maxSize) {
+          const friendlyName = element.alias || element.name;
+          throw new Error(
+            `Field "${friendlyName}" exceeds max size: ${resolvedStr.length} characters (max ${element.maxSize})`,
+          );
+        }
+      }
+
+      result[key] = resolved;
+    }
+
+    return result;
+  }
+
+  /**
+   * Builds a repeater value array from developer-friendly input.
+   * Each repeater item gets its own element key resolution using the
+   * repeater's sub-content-type elements from contentTypeElementConfiguration.
+   */
+  async buildRepeaterValue(
+    items: RepeaterInput[],
+    element: TemplateElement,
+    language: string,
+    sectionId: number,
+  ): Promise<unknown[]> {
+    const config = element.contentTypeElementConfiguration;
+    const repeaterElements = config?.contentTypeDTO?.contentTypeElements;
+    if (!repeaterElements || repeaterElements.length === 0) return items;
+
+    const result: unknown[] = [];
+    for (const item of items) {
+      const repeaterId = -Math.floor(Math.random() * 100000);
+
+      // Repeater items use their own repeaterId as fromContentId for SS links
+      const repeaterContext: ResolveContext = {
+        fromSectionId: sectionId,
+        fromContentId: repeaterId,
+      };
+
+      const elements = await this.buildElements(
+        item.fields,
+        repeaterElements,
+        item.name,
+        language,
+        sectionId,
+        repeaterContext,
+      );
+
+      result.push({
+        repeaterId,
+        repeaterContent: {
+          name: item.name,
+          elements,
+        },
+      });
+    }
+
+    return result;
   }
 
   // ── List fetching ──

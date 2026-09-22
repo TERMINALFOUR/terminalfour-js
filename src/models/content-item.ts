@@ -1,6 +1,6 @@
 import { ContentDTO } from '../types.js';
 import { HttpClient } from '../http-client.js';
-import { ElementResolver, TemplateElement, ResolveContext } from '../element-resolver.js';
+import { ElementResolver, TemplateElement, ResolveContext, RepeaterInput } from '../element-resolver.js';
 import { TypeRegistry } from '../type-registry.js';
 import { formatFileSize, parseElementKey, mapStatus, flattenGroups, STATUS_CODES, AUTH_LEVEL_MAP, debugWarn, DEFAULT_CACHE_TTL, getCacheEpoch } from '../utils.js';
 
@@ -724,9 +724,22 @@ export class ContentItem {
 
       let resolved: unknown;
       if (templateEl && this._resolver) {
-        resolved = await this._resolver.resolveValue(
-          value, templateEl, this.language, this._templateElements ?? undefined, context,
-        );
+        // Repeater fields need the same dedicated resolution ContentResource
+        // uses on create/update — each item's sub-fields resolved into element
+        // keys and wrapped in { repeaterId, repeaterContent }. resolveValue()
+        // passes repeater arrays through untouched, so branch here explicitly.
+        const typeName = this._typeRegistry
+          ? await this._typeRegistry.getNameById(templateEl.type)
+          : null;
+        if (typeName === 'Repeater' && Array.isArray(value)) {
+          resolved = await this._resolver.buildRepeaterValue(
+            value as RepeaterInput[], templateEl, this.language, this._sectionId,
+          );
+        } else {
+          resolved = await this._resolver.resolveValue(
+            value, templateEl, this.language, this._templateElements ?? undefined, context,
+          );
+        }
       } else {
         resolved = value;
       }

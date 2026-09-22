@@ -321,6 +321,131 @@ describe('ContentItem', () => {
     });
   });
 
+  describe('save() repeater resolution (regression)', () => {
+    // Repeater sub-content type: Name + Heading (both Plain Text)
+    const repeaterSubElements: TemplateElement[] = [
+      { id: 1, name: 'Name', alias: 'Name', type: 1, sequence: 1, listId: 0 },
+      { id: 2, name: 'Heading', alias: 'Heading', type: 1, sequence: 2, listId: 0 },
+    ];
+
+    // Content type: Name + a Repeater element "Slides" (type 19)
+    const repeaterTemplate: TemplateElement[] = [
+      { id: 1, name: 'Name', alias: 'Name', type: 1, sequence: 1, listId: 0 },
+      {
+        id: 5, name: 'Slides', alias: 'Slides', type: 19, sequence: 2, listId: 0,
+        contentTypeElementConfiguration: {
+          contentTypeId: 99,
+          contentTypeDTO: { id: 99, contentTypeElements: repeaterSubElements },
+          minRepeats: 0,
+          maxRepeats: 10,
+        },
+      },
+    ];
+
+    // DTO with one existing repeater item in raw API form
+    const repeaterDTO: ContentDTO = {
+      id: 200,
+      contentTypeID: 77,
+      name: 'Deck',
+      language: 'en',
+      status: 1,
+      elements: {
+        'Name#1:1': 'Deck',
+        'Slides#5:19': [
+          {
+            repeaterId: -50,
+            repeaterContent: {
+              name: 'Slide 1',
+              elements: { 'Name#1:1': 'Slide 1', 'Heading#2:1': 'Old heading' },
+            },
+          },
+        ],
+      },
+      version: 1,
+      owner: { id: 0, type: 'USER' },
+      channels: [1],
+    };
+
+    const findSaveBody = () => {
+      const saveCall = (http.request as ReturnType<typeof vi.fn>).mock.calls.find(
+        (c: unknown[]) => {
+          const opts = c[0] as { method: string; path: string };
+          return opts.method === 'POST' && opts.path.includes('/content/');
+        },
+      );
+      return (saveCall![0] as { body: { elements: Record<string, unknown> } }).body;
+    };
+
+    it('reads a repeater field into friendly { name, fields } items', async () => {
+      const item = await createContentItem(repeaterDTO, http, 10, resolver, repeaterTemplate, typeRegistry);
+      expect(item.fields.Slides).toEqual([
+        { name: 'Slide 1', fields: { Name: 'Slide 1', Heading: 'Old heading' } },
+      ]);
+    });
+
+    it('re-resolves a modified repeater field into repeaterId/repeaterContent with element keys on save', async () => {
+      const item = await createContentItem(repeaterDTO, http, 10, resolver, repeaterTemplate, typeRegistry);
+
+      // Modify the repeater via the friendly shape
+      item.fields.Slides = [
+        { name: 'Slide 1', fields: { Heading: 'New heading' } },
+        { name: 'Slide 2', fields: { Heading: 'Second' } },
+      ];
+
+      (http.request as ReturnType<typeof vi.fn>).mockResolvedValueOnce({ ...repeaterDTO, version: 2 });
+      await item.save();
+
+      const body = findSaveBody();
+      const slides = body.elements['Slides#5:19'] as Array<{
+        repeaterId: number;
+        repeaterContent: { name: string; elements: Record<string, unknown> };
+      }>;
+
+      expect(Array.isArray(slides)).toBe(true);
+      expect(slides).toHaveLength(2);
+
+      // Each item must be wrapped with a repeaterId and repeaterContent, and its
+      // sub-fields resolved to element keys (NOT left as friendly names).
+      for (const slide of slides) {
+        expect(typeof slide.repeaterId).toBe('number');
+        expect(slide.repeaterId).toBeLessThan(0);
+        expect(slide.repeaterContent).toBeDefined();
+        expect(slide.repeaterContent.elements).toHaveProperty('Heading#2:1');
+        expect(slide.repeaterContent.elements).toHaveProperty('Name#1:1');
+        // Friendly key must NOT leak through
+        expect(slide.repeaterContent.elements).not.toHaveProperty('Heading');
+      }
+
+      expect(slides[0].repeaterContent.name).toBe('Slide 1');
+      expect(slides[0].repeaterContent.elements['Heading#2:1']).toBe('New heading');
+      expect(slides[1].repeaterContent.name).toBe('Slide 2');
+      expect(slides[1].repeaterContent.elements['Heading#2:1']).toBe('Second');
+    });
+
+    it('matches the structure ContentResource.update produces for the same repeater input', async () => {
+      // Build the expected structure via the shared resolver directly
+      const expected = await resolver.buildRepeaterValue(
+        [{ name: 'Slide A', fields: { Heading: 'HA' } }],
+        repeaterTemplate[1],
+        'en',
+        10,
+      ) as Array<{ repeaterContent: { elements: Record<string, unknown> } }>;
+
+      const item = await createContentItem(repeaterDTO, http, 10, resolver, repeaterTemplate, typeRegistry);
+      item.fields.Slides = [{ name: 'Slide A', fields: { Heading: 'HA' } }];
+      (http.request as ReturnType<typeof vi.fn>).mockResolvedValueOnce({ ...repeaterDTO, version: 2 });
+      await item.save();
+
+      const body = findSaveBody();
+      const slides = body.elements['Slides#5:19'] as Array<{ repeaterContent: { elements: Record<string, unknown> } }>;
+
+      // Same element-key shape as the resolver helper (ignoring random repeaterId)
+      expect(Object.keys(slides[0].repeaterContent.elements).sort())
+        .toEqual(Object.keys(expected[0].repeaterContent.elements).sort());
+      expect(slides[0].repeaterContent.elements['Heading#2:1']).toBe('HA');
+    });
+  });
+
   describe('approve()', () => {
     it('saves with approved status (code 0)', async () => {
       const item = await createContentItem(contentDTO, http, 10, resolver, templateElements, typeRegistry);
