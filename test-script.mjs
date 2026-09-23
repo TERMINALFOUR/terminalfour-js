@@ -180,13 +180,13 @@ async function run(label, fn) {
 // });
 
 // ── 2r. Add child section ──
-await run('section.addSection', async () => {
-  return t4.section(SECTION_ID).addSection({
-    name: 'New Child Section',
-    show: true,
-    status: 'approved',
-  });
-});
+// await run('section.addSection', async () => {
+//   return t4.section(SECTION_ID).addSection({
+//     name: 'New Child Section',
+//     show: true,
+//     status: 'approved',
+//   });
+// });
 
 // ── 2s. Add child section with custom fields ──
 // await run('section.addSection (with customFields)', async () => {
@@ -1030,6 +1030,43 @@ await run('section.addSection', async () => {
 //   return { deleted: true };
 // });
 
+// ── 10g. Read group / visibility ──
+// await run('pageLayout.get — groups', async () => {
+//   const layout = await t4.pageLayouts.get(PAGE_LAYOUT_ID);
+//   console.log('  primaryGroup:', layout.primaryGroup); // 0 = Global
+//   console.log('  sharedGroups:', layout.sharedGroups);
+//   return { primaryGroup: layout.primaryGroup, sharedGroups: layout.sharedGroups };
+// });
+
+// ── 10h. Regroup via save (mutable): move into a group, then read back ──
+// await run('pageLayout.save — set primaryGroup', async () => {
+//   const layout = await t4.pageLayouts.get(PAGE_LAYOUT_ID);
+//   layout.primaryGroup = GROUP_ID;
+//   await layout.save();
+//   const after = await t4.pageLayouts.get(PAGE_LAYOUT_ID);
+//   console.log('  primaryGroup after:', after.primaryGroup);
+//   console.log('  sharedGroups after:', after.sharedGroups);
+//   return { primaryGroup: after.primaryGroup, sharedGroups: after.sharedGroups };
+// });
+
+// ── 10i. Regroup via update (immutable) ──
+// await run('pageLayouts.update — primaryGroup', async () => {
+//   return t4.pageLayouts.update(PAGE_LAYOUT_ID, {
+//     primaryGroup: GROUP_ID,
+//   });
+// });
+
+// ── 10j. Remove from group (back to Global) ──
+// await run('pageLayout.save — clear primaryGroup', async () => {
+//   const layout = await t4.pageLayouts.get(PAGE_LAYOUT_ID);
+//   layout.primaryGroup = 0; // 0 = Global (no owning group)
+//   layout.sharedGroups = [];
+//   await layout.save();
+//   const after = await t4.pageLayouts.get(PAGE_LAYOUT_ID);
+//   console.log('  primaryGroup after:', after.primaryGroup); // expect 0
+//   return { primaryGroup: after.primaryGroup, sharedGroups: after.sharedGroups };
+// });
+
 // ═══════════════════════════════════════════════════════════
 // 11. MEDIA
 // ═══════════════════════════════════════════════════════════
@@ -1440,6 +1477,8 @@ const NAV_MEDIA_ID = 4767;
 const NAV_CHANNEL_ID = 1;
 const NAV_MICROSITE_ID = 6;
 const NAV_PAGE_LAYOUT_ID = 344;
+const NAV_ID = 322;        // an existing navigation object ID to read/regroup
+const NAV_GROUP_ID = 44;   // a group ID to move the navigation object into
 
 // ── 18a. List navigation objects ──
 // await run('navigation.list', async () => {
@@ -1463,6 +1502,55 @@ const NAV_PAGE_LAYOUT_ID = 344;
 // await run('navigation.delete', async () => {
 //   await t4.navigation.delete(256);
 //   return { deleted: true };
+// });
+
+// ── 18d-i. Read group / visibility ──
+// await run('navigation.get — groups', async () => {
+//   const nav = await t4.navigation.get(NAV_ID);
+//   console.log('  primaryGroup:', nav.primaryGroup); // 0 = Global
+//   console.log('  sharedGroups:', nav.sharedGroups);
+//   return { primaryGroup: nav.primaryGroup, sharedGroups: nav.sharedGroups };
+// });
+
+// ── 18d-ii. Regroup via save (mutable): move into a group, then read back ──
+// await run('navigation.save — set primaryGroup', async () => {
+//   const nav = await t4.navigation.get(NAV_ID);
+//   nav.primaryGroup = NAV_GROUP_ID;
+//   nav.sharedGroups = [];
+//   await nav.save();
+//   const after = await t4.navigation.get(NAV_ID);
+//   console.log('  primaryGroup after:', after.primaryGroup);
+//   console.log('  sharedGroups after:', after.sharedGroups);
+//   return { primaryGroup: after.primaryGroup, sharedGroups: after.sharedGroups };
+// });
+
+// ── 18d-iii. Regroup via update (immutable) ──
+// await run('navigation.update — primaryGroup', async () => {
+//   return t4.navigation.update(NAV_ID, {
+//     primaryGroup: NAV_GROUP_ID,
+//     sharedGroups: [],
+//   });
+// });
+
+// ── 18d-iv. Create with a group ──
+// await run('navigation.create — with group', async () => {
+//   return t4.navigation.create({
+//     type: 'breadcrumbs',
+//     name: 'SDK Grouped Breadcrumbs',
+//     primaryGroup: NAV_GROUP_ID,
+//     sharedGroups: [],
+//   });
+// });
+
+// ── 18d-v. Remove from group (back to Global) ──
+// await run('navigation.save — clear primaryGroup', async () => {
+//   const nav = await t4.navigation.get(NAV_ID);
+//   nav.primaryGroup = 0; // 0 = Global (no owning group)
+//   nav.sharedGroups = [];
+//   await nav.save();
+//   const after = await t4.navigation.get(NAV_ID);
+//   console.log('  primaryGroup after:', after.primaryGroup); // expect 0
+//   return { primaryGroup: after.primaryGroup, sharedGroups: after.sharedGroups };
 // });
 
 // ── 18e. A to Z — minimal ──

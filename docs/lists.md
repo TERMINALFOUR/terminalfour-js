@@ -17,8 +17,8 @@ const list = await t4.lists.get(71);
 | `description` | List description |
 | `isForcedLanguage` | `false` |
 | `isDefaultLanguage` | `false` |
-| `primaryGroup` | `0` |
-| `sharedGroups` | `[]` |
+| `primaryGroup` | Owning group ID (`0` = none) |
+| `sharedGroups` | Shared group IDs. Cannot contain `primaryGroup`. |
 | `items` | Item definitions keyed by name |
 
 Items are keyed by name:
