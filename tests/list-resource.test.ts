@@ -110,6 +110,64 @@ describe('ListResource', () => {
     expect(items[0].id).toBe('302');
   });
 
+  it('reads and writes primaryGroup and sharedGroups', async () => {
+    (http.request as ReturnType<typeof vi.fn>).mockImplementation(async (opts: { method: string; path: string }) => {
+      if (opts.method === 'GET') return {
+        id: 71, name: 'Grouped List', description: '', language: 'en',
+        isForcedLanguage: false, isDefaultLanguage: false,
+        primaryGroup: { id: 1, group: { id: 1 } }, sharedGroups: [{ id: 34 }, { id: 40 }],
+        items: [],
+      };
+      if (opts.method === 'PUT') return undefined;
+      throw new Error(`Unexpected: ${opts.method} ${opts.path}`);
+    });
+
+    const list = await resource.get(71);
+    expect(list.primaryGroup).toBe(1);
+    expect(list.sharedGroups).toEqual([34, 40]);
+
+    list.primaryGroup = 35;
+    list.sharedGroups = [40];
+    await list.save();
+
+    const putCall = (http.request as ReturnType<typeof vi.fn>).mock.calls.find(
+      (c: unknown[]) => (c[0] as { method: string }).method === 'PUT',
+    );
+    const body = putCall![0] as { body: Record<string, unknown> };
+    expect(body.body.primaryGroup).toEqual({ id: 35 });
+    expect(body.body.sharedGroups).toEqual([{ id: 40 }]);
+  });
+
+  it('List.save() throws when sharedGroups contains primaryGroup', async () => {
+    (http.request as ReturnType<typeof vi.fn>).mockImplementation(async (opts: { method: string; path: string }) => {
+      if (opts.method === 'GET') return {
+        id: 71, name: 'Test', description: '', language: 'en',
+        isForcedLanguage: false, isDefaultLanguage: false,
+        primaryGroup: { id: 0 }, sharedGroups: [], items: [],
+      };
+      if (opts.method === 'PUT') return undefined;
+      throw new Error(`Unexpected: ${opts.method} ${opts.path}`);
+    });
+
+    const list = await resource.get(71);
+    list.primaryGroup = 35;
+    list.sharedGroups = [35];
+    await expect(list.save()).rejects.toThrow('sharedGroups cannot contain the primaryGroup id (35)');
+
+    const putCall = (http.request as ReturnType<typeof vi.fn>).mock.calls.find(
+      (c: unknown[]) => (c[0] as { method: string }).method === 'PUT',
+    );
+    expect(putCall).toBeUndefined();
+  });
+
+  it('create() throws when sharedGroups contains primaryGroup', async () => {
+    await expect(resource.create({
+      name: 'Bad',
+      primaryGroup: 35,
+      sharedGroups: [35],
+    })).rejects.toThrow('sharedGroups cannot contain the primaryGroup id (35)');
+  });
+
   it('List.save() sends sublist as string', async () => {
     (http.request as ReturnType<typeof vi.fn>).mockImplementation(async (opts: { method: string }) => {
       if (opts.method === 'GET') return {

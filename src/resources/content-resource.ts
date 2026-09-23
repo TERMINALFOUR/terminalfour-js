@@ -5,10 +5,11 @@ import {
   UpdateContentData,
   ContentDTO,
 } from '../types.js';
-import { resolveLanguage, toTimestamp, STATUS_CODES, TtlMap } from '../utils.js';
+import { resolveLanguage, toTimestamp, STATUS_CODES } from '../utils.js';
 import { ContentItem, createContentItem } from '../models/content-item.js';
-import { ElementResolver, TemplateElement, RepeaterInput, ResolveContext, MediaCreateFn } from '../element-resolver.js';
+import { ElementResolver, TemplateElement, ResolveContext, MediaCreateFn } from '../element-resolver.js';
 import { TypeRegistry } from '../type-registry.js';
+import { ContentCache } from '../content-cache.js';
 
 /** Raw content type response from GET /contenttype/{id} */
 interface RawContentType {
@@ -56,34 +57,48 @@ export class ContentResource {
   private readonly httpClient: HttpClient;
   private readonly sectionId: number;
   private readonly defaultLanguage: string;
-  private readonly resolver: ElementResolver;
-  private readonly typeRegistry: TypeRegistry;
+  private readonly cache: ContentCache;
 
-  /** Cache of content type templates keyed by content type ID */
-  private templateCache: TtlMap<number, NewContentTemplate> = new TtlMap();
-
-  constructor(httpClient: HttpClient, sectionId: number, defaultLanguage: string, mediaCreateFn?: MediaCreateFn | null) {
+  constructor(
+    httpClient: HttpClient,
+    sectionId: number,
+    defaultLanguage: string,
+    mediaCreateFn?: MediaCreateFn | null,
+    cache?: ContentCache,
+  ) {
     this.httpClient = httpClient;
     this.sectionId = sectionId;
     this.defaultLanguage = defaultLanguage;
-    this.typeRegistry = new TypeRegistry(httpClient);
-    this.resolver = new ElementResolver(httpClient, defaultLanguage, this.typeRegistry, mediaCreateFn);
+    // A shared cache is threaded in by T4Client so the element TypeRegistry and
+    // content type templates survive across sections during a traversal. When
+    // constructed standalone (e.g. in tests), fall back to a private cache so
+    // behaviour is unchanged.
+    this.cache = cache ?? new ContentCache(httpClient, defaultLanguage, mediaCreateFn);
+  }
+
+  private get resolver(): ElementResolver {
+    return this.cache.resolver;
+  }
+
+  private get typeRegistry(): TypeRegistry {
+    return this.cache.typeRegistry;
   }
 
   private async getTemplate(contentTypeId: number): Promise<NewContentTemplate> {
-    const cached = this.templateCache.get(contentTypeId);
+    const sectionKey = `${contentTypeId}:${this.sectionId}`;
+    const cached = this.cache.sectionTemplates.get(sectionKey) as NewContentTemplate | undefined;
     if (cached) return cached;
 
-    // Fetch both the new content template and the full content type definition
+    // The section template (channels etc.) is section-specific; the content type
+    // definition (alias, listId, repeater config) is instance-wide. Fetch each
+    // through its own shared cache so revisiting a section, or reusing a content
+    // type across sections, avoids re-fetching.
     const [template, rawContentType] = await Promise.all([
       this.httpClient.request<NewContentTemplate>({
         method: 'GET',
         path: `/content/type/${contentTypeId}/${this.sectionId}`,
       }),
-      this.httpClient.request<RawContentType>({
-        method: 'GET',
-        path: `/contenttype/${contentTypeId}`,
-      }),
+      this.getContentTypeDefinition(contentTypeId),
     ]);
 
     // Merge alias and contentTypeElementConfiguration from the full content type
@@ -100,8 +115,21 @@ export class ContentResource {
       }
     }
 
-    this.templateCache.set(contentTypeId, template);
+    this.cache.sectionTemplates.set(sectionKey, template);
     return template;
+  }
+
+  /** Fetches the section-independent content type definition, cached by content type ID. */
+  private async getContentTypeDefinition(contentTypeId: number): Promise<RawContentType> {
+    const cached = this.cache.contentTypeDefinitions.get(contentTypeId) as RawContentType | undefined;
+    if (cached) return cached;
+
+    const rawContentType = await this.httpClient.request<RawContentType>({
+      method: 'GET',
+      path: `/contenttype/${contentTypeId}`,
+    });
+    this.cache.contentTypeDefinitions.set(contentTypeId, rawContentType);
+    return rawContentType;
   }
 
   /**

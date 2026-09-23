@@ -1,5 +1,5 @@
 import { HttpClient } from '../http-client.js';
-import { decodeHtmlEntities, DEFAULT_CACHE_TTL, getCacheEpoch } from '../utils.js';
+import { decodeHtmlEntities, DEFAULT_CACHE_TTL, getCacheEpoch, readPrimaryGroup, readSharedGroups, writePrimaryGroup, writeSharedGroups, assertGroupsValid, RawPrimaryGroup } from '../utils.js';
 
 /** Friendly processor keys mapped to API names for page layouts */
 const PAGE_PROCESSOR_MAP: Record<string, string> = {
@@ -29,6 +29,8 @@ interface RawPageLayoutDetail {
   fileExtension?: string;
   syntaxType?: number;
   layoutProcessor?: number;
+  primaryGroup?: RawPrimaryGroup;
+  sharedGroups?: Array<{ id: number }>;
   [key: string]: unknown;
 }
 
@@ -49,6 +51,10 @@ export class PageLayout {
   fileExtension: string;
   syntax: string;
   processor: string;
+  /** Owning group ID. 0 = no primary group (Global). */
+  primaryGroup: number;
+  /** Group IDs this page layout is shared with. */
+  sharedGroups: number[];
 
   private readonly _httpClient!: HttpClient;
   private _rawData!: RawPageLayoutDetail;
@@ -73,6 +79,8 @@ export class PageLayout {
     const procName = processorMap.get(raw.layoutProcessor ?? 0) ?? '';
     const procEntry = Object.entries(PAGE_PROCESSOR_MAP).find(([, apiName]) => apiName === procName);
     this.processor = procEntry ? procEntry[0] : procName || `unknown (${raw.layoutProcessor})`;
+    this.primaryGroup = readPrimaryGroup(raw.primaryGroup);
+    this.sharedGroups = readSharedGroups(raw.sharedGroups);
     Object.defineProperty(this, '_httpClient', { value: httpClient, enumerable: false });
     Object.defineProperty(this, '_rawData', { value: raw as RawPageLayoutDetail, enumerable: false, writable: true });
     Object.defineProperty(this, '_syntaxMap', { value: syntaxMap, enumerable: false });
@@ -81,6 +89,8 @@ export class PageLayout {
 
   /** Persists current property values to the server via PUT. */
   async save(): Promise<void> {
+    assertGroupsValid(this.primaryGroup, this.sharedGroups);
+
     // Resolve syntax name to ID
     let syntaxId = this._rawData.syntaxType as number;
     if (this._syntaxMap) {
@@ -105,6 +115,8 @@ export class PageLayout {
       fileExtension: this.fileExtension,
       syntaxType: String(syntaxId),
       layoutProcessor: String(processorId),
+      primaryGroup: writePrimaryGroup(this.primaryGroup),
+      sharedGroups: writeSharedGroups(this.sharedGroups),
     };
 
     await this._httpClient.request<void>({
@@ -189,6 +201,8 @@ export class PageLayoutResource {
     fileExtension?: string;
     syntax?: string;
     processor?: string;
+    primaryGroup?: number;
+    sharedGroups?: number[];
   }): Promise<PageLayout> {
     const layout = await this.get(id);
     if (data.name !== undefined) layout.name = data.name;
@@ -198,6 +212,8 @@ export class PageLayoutResource {
     if (data.fileExtension !== undefined) layout.fileExtension = data.fileExtension;
     if (data.syntax !== undefined) layout.syntax = data.syntax;
     if (data.processor !== undefined) layout.processor = data.processor;
+    if (data.primaryGroup !== undefined) layout.primaryGroup = data.primaryGroup;
+    if (data.sharedGroups !== undefined) layout.sharedGroups = data.sharedGroups;
     await layout.save();
     return layout;
   }
@@ -215,6 +231,7 @@ export class PageLayoutResource {
     sharedGroups?: number[];
   }): Promise<PageLayout> {
     if (!data.name?.trim()) throw new Error('Page layout name is required');
+    assertGroupsValid(data.primaryGroup ?? 0, data.sharedGroups);
 
     const [syntaxMap, processorMap] = await Promise.all([
       this.getSyntaxMap(),
@@ -271,8 +288,8 @@ export class PageLayoutResource {
         fileExtension: extensionValue,
         syntaxType: syntaxId,
         layoutProcessor: processorId,
-        sharedGroups: (data.sharedGroups ?? []).map((id) => ({ id })),
-        primaryGroup: { id: data.primaryGroup ?? null },
+        sharedGroups: writeSharedGroups(data.sharedGroups),
+        primaryGroup: writePrimaryGroup(data.primaryGroup ?? 0),
       },
     });
 

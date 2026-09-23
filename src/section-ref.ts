@@ -10,6 +10,7 @@ import { resolveLanguage, mapStatus, flattenGroups, STATUS_CODES, AUTH_LEVEL_MAP
 import { ContentResource } from './resources/content-resource.js';
 import { SectionItem } from './models/section-item.js';
 import { MediaCreateFn } from './element-resolver.js';
+import { ContentCache } from './content-cache.js';
 
 /** A node in the section hierarchy tree */
 export interface SectionTreeNode {
@@ -110,14 +111,16 @@ export class SectionRef {
   private readonly sectionId: number;
   private readonly defaultLanguage: string;
   private readonly mediaCreateFn: MediaCreateFn | null;
+  private readonly cache: ContentCache | undefined;
 
-  constructor(httpClient: HttpClient, sectionId: number, defaultLanguage: string, mediaCreateFn?: MediaCreateFn | null) {
+  constructor(httpClient: HttpClient, sectionId: number, defaultLanguage: string, mediaCreateFn?: MediaCreateFn | null, cache?: ContentCache) {
     this.httpClient = httpClient;
     this.sectionId = sectionId;
     this.defaultLanguage = defaultLanguage;
     this.mediaCreateFn = mediaCreateFn ?? null;
+    this.cache = cache;
 
-    this.content = new ContentResource(httpClient, sectionId, defaultLanguage, this.mediaCreateFn);
+    this.content = new ContentResource(httpClient, sectionId, defaultLanguage, this.mediaCreateFn, this.cache);
   }
 
   // ── Section metadata ──
@@ -135,7 +138,7 @@ export class SectionRef {
     const meta = raw.metaData as { id?: number; type?: number; enabled?: boolean } | undefined;
     if (meta?.enabled && meta.id) {
       try {
-        const metaContent = new ContentResource(this.httpClient, this.sectionId, this.defaultLanguage, this.mediaCreateFn);
+        const metaContent = new ContentResource(this.httpClient, this.sectionId, this.defaultLanguage, this.mediaCreateFn, this.cache);
         const item = await metaContent.get(meta.id, { language });
         customFields = stripNameField(item.fields ?? null);
       } catch {
@@ -817,7 +820,7 @@ export class SectionRef {
     if (metaContentTypeId) {
       // Use a ContentResource on the new section to get full element resolution
       // (list values, SS links, file uploads, etc.)
-      const metadataContentResource = new ContentResource(this.httpClient, newSectionId, this.defaultLanguage, this.mediaCreateFn);
+      const metadataContentResource = new ContentResource(this.httpClient, newSectionId, this.defaultLanguage, this.mediaCreateFn, this.cache);
 
       // Create the metadata content item (ContentResource.create handles the full body)
       const metaItem = await metadataContentResource.create({
@@ -927,7 +930,7 @@ export class SectionRef {
         );
       }
 
-      const contentResource = new ContentResource(this.httpClient, this.sectionId, this.defaultLanguage, this.mediaCreateFn);
+      const contentResource = new ContentResource(this.httpClient, this.sectionId, this.defaultLanguage, this.mediaCreateFn, this.cache);
       const metaContentId = meta?.id ?? 0;
 
       if (metaContentId > 0) {
