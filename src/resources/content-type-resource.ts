@@ -1,6 +1,6 @@
 import { HttpClient } from '../http-client.js';
 import { ContentTypeData, ContentTypeFieldDef } from '../types.js';
-import { decodeHtmlEntities, AUTH_LEVEL_MAP, AUTH_LEVEL_REVERSE, debugWarn, DEFAULT_CACHE_TTL, getCacheEpoch } from '../utils.js';
+import { decodeHtmlEntities, AUTH_LEVEL_MAP, AUTH_LEVEL_REVERSE, debugWarn, DEFAULT_CACHE_TTL, getCacheEpoch, invalidateAllCaches } from '../utils.js';
 
 /** Raw content type element from the API response */
 interface ApiContentTypeElement {
@@ -894,6 +894,11 @@ export class ContentType implements ContentTypeData {
       body: updated,
     });
 
+    // The content type definition changed, so any cached copy (content type
+    // templates/definitions, element type maps, etc.) is now stale. Invalidate
+    // all caches via the global epoch so subsequent reads re-fetch.
+    invalidateAllCaches();
+
     // Update raw data for next save
     this._rawData = updated as unknown as ApiContentType;
     this._removedElementIds.clear();
@@ -1128,6 +1133,10 @@ export class ContentTypeResource {
       method: 'DELETE',
       path: `/contenttype/${id}`,
     });
+
+    // A deleted content type may be cached; invalidate all caches so stale
+    // definitions/templates aren't served after the delete.
+    invalidateAllCaches();
   }
 
   /** Creates a new content type. */
@@ -1310,6 +1319,9 @@ export class ContentTypeResource {
         contentTypeElements,
       },
     });
+
+    // New content type may affect cached lookups; invalidate for consistency.
+    invalidateAllCaches();
 
     const editorMap = await this.getEditorMap();
     const result = mapContentType(raw, typeMap, editorMap);

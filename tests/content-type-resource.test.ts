@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { ContentTypeResource } from '../src/resources/content-type-resource.js';
 import { HttpClient } from '../src/http-client.js';
+import { getCacheEpoch } from '../src/utils.js';
 import { ELEMENT_TYPES, HTML_EDITORS } from './helpers.js';
 
 function mockHttpClient() {
@@ -1767,5 +1768,69 @@ describe('ContentTypeResource', () => {
       name: 'Test',
       elements: [{ name: 'Title', type: 'Plain Text', repeater: { contentTypeId: 99 } }],
     })).rejects.toThrow('only valid for Repeater elements');
+  });
+
+  describe('cache invalidation on writes', () => {
+    const regularCt = {
+      id: 343, name: 'Test', alias: 'Test', description: '', type: 10,
+      minAuthLevel: 2, workflow: 0, enableDirectEdit: true, sharedGroups: [],
+      contentTypeElements: [
+        { id: 1, name: 'Name', type: 1, maxSize: 80, compulsory: true, listId: 0, sequence: 1, alias: 'Name', shown: true },
+      ],
+    };
+
+    it('bumps the cache epoch after update()', async () => {
+      (http.request as ReturnType<typeof vi.fn>).mockImplementation(async (opts: { method: string; path: string }) => {
+        if (opts.path === '/type/') return ELEMENT_TYPES;
+        if (opts.path === '/htmlEditor') return HTML_EDITORS;
+        if (opts.method === 'GET' && opts.path === '/contenttype/343') return regularCt;
+        if (opts.method === 'PUT' && opts.path === '/contenttype/343') return undefined;
+        throw new Error(`Unexpected: ${opts.method} ${opts.path}`);
+      });
+
+      const before = getCacheEpoch();
+      await resource.update(343, { description: 'changed' });
+      expect(getCacheEpoch()).toBeGreaterThan(before);
+    });
+
+    it('bumps the cache epoch after delete()', async () => {
+      (http.request as ReturnType<typeof vi.fn>).mockImplementation(async (opts: { method: string; path: string }) => {
+        if (opts.method === 'GET' && opts.path === '/contenttype/44') return { id: 44, name: 'Article', alias: 'Article', type: 10, contentTypeElements: [] };
+        if (opts.method === 'DELETE' && opts.path === '/contenttype/44') return undefined;
+        throw new Error(`Unexpected: ${opts.method} ${opts.path}`);
+      });
+
+      const before = getCacheEpoch();
+      await resource.delete(44);
+      expect(getCacheEpoch()).toBeGreaterThan(before);
+    });
+
+    it('does NOT bump the cache epoch when a delete is blocked (system content type)', async () => {
+      (http.request as ReturnType<typeof vi.fn>).mockImplementation(async (opts: { method: string; path: string }) => {
+        if (opts.method === 'GET' && opts.path === '/contenttype/900') return { id: 900, name: 'System', alias: 'System', type: 30, contentTypeElements: [] };
+        throw new Error(`Unexpected: ${opts.method} ${opts.path}`);
+      });
+
+      const before = getCacheEpoch();
+      await expect(resource.delete(900)).rejects.toThrow('system content type');
+      // No write happened, so caches must not be invalidated
+      expect(getCacheEpoch()).toBe(before);
+    });
+
+    it('bumps the cache epoch after create()', async () => {
+      (http.request as ReturnType<typeof vi.fn>).mockImplementation(async (opts: { method: string; path: string }) => {
+        if (opts.path === '/type/') return ELEMENT_TYPES;
+        if (opts.path === '/htmlEditor') return HTML_EDITORS;
+        if (opts.method === 'POST' && opts.path === '/contenttype') return {
+          id: 500, name: 'New CT', alias: 'New CT', description: '', type: 10,
+          contentTypeElements: [{ id: 1, name: 'Name', type: 1, alias: 'Name', sequence: 1 }],
+        };
+        throw new Error(`Unexpected: ${opts.method} ${opts.path}`);
+      });
+
+      const before = getCacheEpoch();
+      await resource.create({ name: 'New CT', elements: [{ name: 'Title', type: 'Plain Text' }] });
+      expect(getCacheEpoch()).toBeGreaterThan(before);
+    });
   });
 });

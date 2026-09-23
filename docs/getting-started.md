@@ -143,6 +143,8 @@ t4.clearCache();
 
 These caches are shared across the whole client, so reuse a single `T4Client` instance for the life of your task. Traversing the hierarchy — for example fetching and updating content across many sections with `t4.section(id)` — reuses cached element types and content type definitions instead of re-fetching them for each section. Creating a new `T4Client` per section would defeat this, so avoid that in loops.
 
+Editing a content type through this client (`contentTypes.update()`, `ContentType.save()`, and so on) clears these caches for you, so your changes show up on the next read. Call `clearCache()` manually only for changes made outside this client instance.
+
 ---
 
 **Next:** [Sections](./sections.md)

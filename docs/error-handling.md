@@ -73,7 +73,9 @@ Graceful degradation paths, including failed media lookups and group name resolu
 
 ## Clear stale cache data
 
-After changing content types, lists, or other configuration, invalidate every SDK cache:
+Content type writes through the SDK — `contentTypes.create()`, `contentTypes.update()`, `contentTypes.delete()`, and `ContentType.save()` (including `addField`/`removeField`) — clear the SDK's caches automatically, so a content type edit is reflected on the next read without any extra step.
+
+You still need to clear the cache manually when configuration changes **outside** this SDK instance — for example content type, list, or other changes made in the T4 UI or by another process while your client is running:
 
 ```typescript
 t4.clearCache();

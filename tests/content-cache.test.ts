@@ -112,4 +112,54 @@ describe('content cache sharing across sections', () => {
     expect(countCalls((p) => p === '/type/')).toBe(2);
     expect(countCalls((p) => p === '/contenttype/71')).toBe(2);
   });
+
+  it('invalidates the cached content type definition after a content type update', async () => {
+    // A fuller content type object for the contentTypes.get() path used by update()
+    const fullCt71 = {
+      id: 71,
+      name: 'Article',
+      alias: 'Article',
+      description: '',
+      type: 10,
+      minAuthLevel: 2,
+      workflow: 0,
+      enableDirectEdit: true,
+      sharedGroups: [],
+      contentTypeElements: [
+        { id: 1, name: 'Name', alias: 'Name', description: '', type: 1, maxSize: 80, compulsory: true, listId: 0, sequence: 1, shown: true },
+        { id: 2, name: 'Title', alias: 'Title', description: '', type: 1, maxSize: 200, compulsory: false, listId: 0, sequence: 2, shown: true },
+      ],
+    };
+
+    // Extend the mock to also serve the htmlEditor lookup and accept the PUT
+    (http.request as unknown) = vi.fn(async (opts: { method: string; path: string }) => {
+      const { method, path } = opts;
+      if (path === '/type/') return ELEMENT_TYPES;
+      if (path === '/htmlEditor') return [];
+      if (method === 'GET' && path === '/contenttype/71') return fullCt71;
+      if (method === 'PUT' && path === '/contenttype/71') return undefined;
+      const tMatch = path.match(/^\/content\/type\/71\/(\d+)$/);
+      if (tMatch) return sectionTemplate;
+      const cMatch = path.match(/^\/content\/(\d+)\/(\d+)\/en$/);
+      if (cMatch) return contentDTO(Number(cMatch[1]), Number(cMatch[2]));
+      throw new Error(`Unexpected request: ${method} ${path}`);
+    });
+
+    // Prime the cache: this content.get() caches content type 71's definition
+    await client.section(2777).content.get(8730);
+    expect(countCalls((p) => p === '/contenttype/71')).toBeGreaterThanOrEqual(1);
+
+    // Update the content type — this must invalidate the cached definition.
+    await client.contentTypes.update(71, { description: 'changed' });
+
+    // Measure AFTER the update completes (update itself does its own get), so we
+    // isolate whether the *subsequent content read* re-fetches the definition.
+    const afterUpdate = countCalls((p) => p === '/contenttype/71');
+
+    // A subsequent content read must re-fetch the definition, not serve stale.
+    // Without invalidation this read would hit the still-warm cache and add 0.
+    await client.section(2778).content.get(8732);
+
+    expect(countCalls((p) => p === '/contenttype/71')).toBe(afterUpdate + 1);
+  });
 });
