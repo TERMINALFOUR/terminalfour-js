@@ -612,6 +612,71 @@ describe('ContentTypeResource', () => {
     expect(body.body.enableDirectEdit).toBe(false);
   });
 
+  it('reads and writes primaryGroup and sharedGroups', async () => {
+    const groupedCt = {
+      ...fullContentType,
+      primaryGroup: { id: 1, group: { id: 1 } },
+      sharedGroups: [{ id: 34 }, { id: 40 }],
+    };
+    (http.request as ReturnType<typeof vi.fn>).mockImplementation(async (opts: { method: string; path: string }) => {
+      if (opts.path === '/type/') return ELEMENT_TYPES;
+      if (opts.path === '/htmlEditor') return HTML_EDITORS;
+      if (opts.method === 'GET' && opts.path === '/contenttype/343') return groupedCt;
+      if (opts.method === 'PUT' && opts.path === '/contenttype/343') return undefined;
+      throw new Error(`Unexpected: ${opts.method} ${opts.path}`);
+    });
+
+    const ct = await resource.get(343);
+    expect(ct.primaryGroup).toBe(1);
+    expect(ct.sharedGroups).toEqual([34, 40]);
+
+    ct.primaryGroup = 35;
+    ct.sharedGroups = [40];
+    await ct.save();
+
+    const putCall = (http.request as ReturnType<typeof vi.fn>).mock.calls.find(
+      (c: unknown[]) => (c[0] as { method: string }).method === 'PUT',
+    );
+    const body = putCall![0] as { body: Record<string, unknown> };
+    expect(body.body.primaryGroup).toEqual({ id: 35 });
+    expect(body.body.sharedGroups).toEqual([{ id: 40 }]);
+  });
+
+  it('save() throws when sharedGroups contains primaryGroup', async () => {
+    (http.request as ReturnType<typeof vi.fn>).mockImplementation(async (opts: { method: string; path: string }) => {
+      if (opts.path === '/type/') return ELEMENT_TYPES;
+      if (opts.path === '/htmlEditor') return HTML_EDITORS;
+      if (opts.method === 'GET' && opts.path === '/contenttype/343') return fullContentType;
+      if (opts.method === 'PUT' && opts.path === '/contenttype/343') return undefined;
+      throw new Error(`Unexpected: ${opts.method} ${opts.path}`);
+    });
+
+    const ct = await resource.get(343);
+    ct.primaryGroup = 35;
+    ct.sharedGroups = [35];
+    await expect(ct.save()).rejects.toThrow('sharedGroups cannot contain the primaryGroup id (35)');
+
+    const putCall = (http.request as ReturnType<typeof vi.fn>).mock.calls.find(
+      (c: unknown[]) => (c[0] as { method: string }).method === 'PUT',
+    );
+    expect(putCall).toBeUndefined();
+  });
+
+  it('create() throws when sharedGroups contains primaryGroup', async () => {
+    (http.request as ReturnType<typeof vi.fn>).mockImplementation(async (opts: { path: string }) => {
+      if (opts.path === '/type/') return ELEMENT_TYPES;
+      if (opts.path === '/htmlEditor') return HTML_EDITORS;
+      throw new Error(`Unexpected: ${opts.path}`);
+    });
+
+    await expect(resource.create({
+      name: 'Bad',
+      elements: [{ name: 'Body', type: 'HTML' }],
+      primaryGroup: 35,
+      sharedGroups: [35],
+    })).rejects.toThrow('sharedGroups cannot contain the primaryGroup id (35)');
+  });
+
   it('contentTypes.update() immutably updates a content type', async () => {
     (http.request as ReturnType<typeof vi.fn>).mockImplementation(async (opts: { method: string; path: string }) => {
       if (opts.path === '/type/') return ELEMENT_TYPES;

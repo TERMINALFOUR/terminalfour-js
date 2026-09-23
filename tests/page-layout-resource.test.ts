@@ -141,4 +141,169 @@ describe('PageLayoutResource', () => {
   it('create() throws if name is empty', async () => {
     await expect(resource.create({ name: '' })).rejects.toThrow('name is required');
   });
+
+  describe('group / visibility', () => {
+    it('get() reads primaryGroup and sharedGroups', async () => {
+      (http.request as ReturnType<typeof vi.fn>).mockImplementation(async (opts: { path: string }) => {
+        if (opts.path === '/pageLayout/5') return {
+          id: 5, name: 'Homepage', description: '', headerCode: '', footerCode: '',
+          stylesheetCode: '', fileExtension: '', syntaxType: 3, layoutProcessor: 1,
+          primaryGroup: { id: 1, group: { id: 1 } }, sharedGroups: [{ id: 34 }, { id: 40 }],
+        };
+        if (opts.path === '/syntaxType') return [{ id: 3, name: 'HTML/XML' }];
+        if (opts.path === '/publishProcessor/10') return [{ id: 1, name: 'T4 Tag Page' }];
+        throw new Error(`Unexpected: ${opts.path}`);
+      });
+
+      const layout = await resource.get(5);
+      expect(layout.primaryGroup).toBe(1);
+      expect(layout.sharedGroups).toEqual([34, 40]);
+    });
+
+    it('get() defaults to 0 / [] when groups are absent', async () => {
+      (http.request as ReturnType<typeof vi.fn>).mockImplementation(async (opts: { path: string }) => {
+        if (opts.path === '/pageLayout/5') return {
+          id: 5, name: 'Homepage', description: '', headerCode: '', footerCode: '',
+          stylesheetCode: '', fileExtension: '', syntaxType: 3, layoutProcessor: 1,
+        };
+        if (opts.path === '/syntaxType') return [{ id: 3, name: 'HTML/XML' }];
+        if (opts.path === '/publishProcessor/10') return [{ id: 1, name: 'T4 Tag Page' }];
+        throw new Error(`Unexpected: ${opts.path}`);
+      });
+
+      const layout = await resource.get(5);
+      expect(layout.primaryGroup).toBe(0);
+      expect(layout.sharedGroups).toEqual([]);
+    });
+
+    it('save() writes primaryGroup and sharedGroups in API shape', async () => {
+      (http.request as ReturnType<typeof vi.fn>).mockImplementation(async (opts: { method: string; path: string }) => {
+        if (opts.path === '/pageLayout/5') return {
+          id: 5, name: 'Homepage', description: '', headerCode: '', footerCode: '',
+          stylesheetCode: '', fileExtension: '', syntaxType: 3, layoutProcessor: 1,
+          primaryGroup: { id: 0 }, sharedGroups: [],
+        };
+        if (opts.path === '/syntaxType') return [{ id: 3, name: 'HTML/XML' }];
+        if (opts.path === '/publishProcessor/10') return [{ id: 1, name: 'T4 Tag Page' }];
+        if (opts.method === 'PUT' && opts.path === '/pageLayout/5') return undefined;
+        throw new Error(`Unexpected: ${opts.method} ${opts.path}`);
+      });
+
+      const layout = await resource.get(5);
+      layout.primaryGroup = 35;
+      layout.sharedGroups = [34, 40];
+      await layout.save();
+
+      const putCall = (http.request as ReturnType<typeof vi.fn>).mock.calls.find(
+        (c: unknown[]) => (c[0] as { method: string }).method === 'PUT',
+      );
+      const body = putCall![0] as { body: Record<string, unknown> };
+      expect(body.body.primaryGroup).toEqual({ id: 35 });
+      expect(body.body.sharedGroups).toEqual([{ id: 34 }, { id: 40 }]);
+    });
+
+    it('save() writes { id: null } when primaryGroup is cleared to 0', async () => {
+      (http.request as ReturnType<typeof vi.fn>).mockImplementation(async (opts: { method: string; path: string }) => {
+        if (opts.path === '/pageLayout/5') return {
+          id: 5, name: 'Homepage', description: '', headerCode: '', footerCode: '',
+          stylesheetCode: '', fileExtension: '', syntaxType: 3, layoutProcessor: 1,
+          primaryGroup: { id: 35 }, sharedGroups: [{ id: 34 }],
+        };
+        if (opts.path === '/syntaxType') return [{ id: 3, name: 'HTML/XML' }];
+        if (opts.path === '/publishProcessor/10') return [{ id: 1, name: 'T4 Tag Page' }];
+        if (opts.method === 'PUT') return undefined;
+        throw new Error(`Unexpected: ${opts.method} ${opts.path}`);
+      });
+
+      const layout = await resource.get(5);
+      layout.primaryGroup = 0;
+      layout.sharedGroups = [];
+      await layout.save();
+
+      const putCall = (http.request as ReturnType<typeof vi.fn>).mock.calls.find(
+        (c: unknown[]) => (c[0] as { method: string }).method === 'PUT',
+      );
+      const body = putCall![0] as { body: Record<string, unknown> };
+      expect(body.body.primaryGroup).toEqual({ id: null });
+      expect(body.body.sharedGroups).toEqual([]);
+    });
+
+    it('update() sets primaryGroup and sharedGroups', async () => {
+      (http.request as ReturnType<typeof vi.fn>).mockImplementation(async (opts: { method: string; path: string }) => {
+        if (opts.path === '/pageLayout/5') return {
+          id: 5, name: 'Homepage', description: '', headerCode: '', footerCode: '',
+          stylesheetCode: '', fileExtension: '', syntaxType: 3, layoutProcessor: 1,
+          primaryGroup: { id: 0 }, sharedGroups: [],
+        };
+        if (opts.path === '/syntaxType') return [{ id: 3, name: 'HTML/XML' }];
+        if (opts.path === '/publishProcessor/10') return [{ id: 1, name: 'T4 Tag Page' }];
+        if (opts.method === 'PUT') return undefined;
+        throw new Error(`Unexpected: ${opts.method} ${opts.path}`);
+      });
+
+      const layout = await resource.update(5, { primaryGroup: 35, sharedGroups: [34] });
+      expect(layout.primaryGroup).toBe(35);
+      expect(layout.sharedGroups).toEqual([34]);
+
+      const putCall = (http.request as ReturnType<typeof vi.fn>).mock.calls.find(
+        (c: unknown[]) => (c[0] as { method: string }).method === 'PUT',
+      );
+      const body = putCall![0] as { body: Record<string, unknown> };
+      expect(body.body.primaryGroup).toEqual({ id: 35 });
+      expect(body.body.sharedGroups).toEqual([{ id: 34 }]);
+    });
+
+    it('create() sends primaryGroup and sharedGroups', async () => {
+      (http.request as ReturnType<typeof vi.fn>).mockImplementation(async (opts: { method: string; path: string }) => {
+        if (opts.path === '/syntaxType') return [{ id: 3, name: 'HTML/XML' }];
+        if (opts.path === '/publishProcessor/10') return [{ id: 15, name: 'Handlebars Page' }];
+        if (opts.method === 'POST' && opts.path === '/pageLayout') return {
+          id: 900, name: 'Grouped', description: '', headerCode: '', footerCode: '',
+          syntaxType: 3, layoutProcessor: 15, primaryGroup: { id: 35 }, sharedGroups: [{ id: 34 }],
+        };
+        throw new Error(`Unexpected: ${opts.method} ${opts.path}`);
+      });
+
+      const layout = await resource.create({ name: 'Grouped', primaryGroup: 35, sharedGroups: [34] });
+      expect(layout.primaryGroup).toBe(35);
+      expect(layout.sharedGroups).toEqual([34]);
+
+      const postCall = (http.request as ReturnType<typeof vi.fn>).mock.calls.find(
+        (c: unknown[]) => (c[0] as { method: string }).method === 'POST',
+      );
+      const body = postCall![0] as { body: Record<string, unknown> };
+      expect(body.body.primaryGroup).toEqual({ id: 35 });
+      expect(body.body.sharedGroups).toEqual([{ id: 34 }]);
+    });
+
+    it('save() throws when sharedGroups contains primaryGroup, without a PUT', async () => {
+      (http.request as ReturnType<typeof vi.fn>).mockImplementation(async (opts: { method: string; path: string }) => {
+        if (opts.path === '/pageLayout/5') return {
+          id: 5, name: 'Homepage', description: '', headerCode: '', footerCode: '',
+          stylesheetCode: '', fileExtension: '', syntaxType: 3, layoutProcessor: 1,
+          primaryGroup: { id: 0 }, sharedGroups: [],
+        };
+        if (opts.path === '/syntaxType') return [{ id: 3, name: 'HTML/XML' }];
+        if (opts.path === '/publishProcessor/10') return [{ id: 1, name: 'T4 Tag Page' }];
+        if (opts.method === 'PUT') return undefined;
+        throw new Error(`Unexpected: ${opts.method} ${opts.path}`);
+      });
+
+      const layout = await resource.get(5);
+      layout.primaryGroup = 35;
+      layout.sharedGroups = [34, 35];
+      await expect(layout.save()).rejects.toThrow('sharedGroups cannot contain the primaryGroup id (35)');
+
+      const putCall = (http.request as ReturnType<typeof vi.fn>).mock.calls.find(
+        (c: unknown[]) => (c[0] as { method: string }).method === 'PUT',
+      );
+      expect(putCall).toBeUndefined();
+    });
+
+    it('create() throws when sharedGroups contains primaryGroup', async () => {
+      await expect(
+        resource.create({ name: 'Bad', primaryGroup: 35, sharedGroups: [35] }),
+      ).rejects.toThrow('sharedGroups cannot contain the primaryGroup id (35)');
+    });
+  });
 });
