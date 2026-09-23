@@ -15,6 +15,7 @@ import { PageLayoutResource } from './resources/page-layout-resource.js';
 import { MediaTypeResource } from './resources/media-type-resource.js';
 import { NavigationResource } from './resources/navigation-resource.js';
 import { Handlebars } from './handlebars.js';
+import { ContentCache } from './content-cache.js';
 import { invalidateAllCaches, normaliseBaseUrl, assertNotBrowser } from './utils.js';
 
 /**
@@ -40,6 +41,7 @@ export class T4Client {
   private readonly httpClient: HttpClient;
   private readonly defaultLanguage: string;
   private readonly mediaCreateFn: MediaCreateFn;
+  private readonly contentCache: ContentCache;
 
   constructor(config: T4ClientConfig) {
     assertNotBrowser();
@@ -79,13 +81,18 @@ export class T4Client {
       });
       return item.id;
     };
+
+    // Shared content caches (element TypeRegistry, content type templates).
+    // Threaded into every SectionRef/ContentResource so hierarchy traversal
+    // doesn't re-fetch instance-wide data on each t4.section(id) call.
+    this.contentCache = new ContentCache(this.httpClient, this.defaultLanguage, this.mediaCreateFn);
   }
 
   /**
    * Returns a section reference scoped to the given section ID.
    */
   section(id: number): SectionRef {
-    return new SectionRef(this.httpClient, id, this.defaultLanguage, this.mediaCreateFn);
+    return new SectionRef(this.httpClient, id, this.defaultLanguage, this.mediaCreateFn, this.contentCache);
   }
 
   /**
