@@ -113,6 +113,19 @@ await article.save();
 
 `save()` defaults the status to `'pending'` to match T4's approval workflow. Set `item.status = 'approved'` before saving if the item must remain approved.
 
+`save()` resolves every field type the same way `content.create()` and `content.update()` do — including Repeater fields. A repeater is read back as an array of `{ name, fields }` items (see [Values returned on read](#values-returned-on-read)), and you assign the same friendly shape back:
+
+```typescript
+const deck = await t4.section(482).content.get(9200);
+deck.fields['Slides'] = [
+  { name: 'Slide 1', fields: { Heading: 'Welcome' } },
+  { name: 'Slide 2', fields: { Heading: 'Agenda' } },
+];
+await deck.save();
+```
+
+Each repeater item's sub-fields are resolved into the API's element format automatically, so the mutable `get()` → modify → `save()` path and `content.update()` produce identical results.
+
 ## Approve, duplicate, move, or remove
 
 ### Approve one item

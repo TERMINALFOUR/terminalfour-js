@@ -746,4 +746,115 @@ describe('ElementResolver', () => {
       expect(result).toBe('1:1,FreeTextValue');
     });
   });
+
+  describe('buildElements', () => {
+    it('resolves friendly fields to element keys and includes the Name element', async () => {
+      const elements: TemplateElement[] = [
+        makeElement({ id: 1, name: 'Name', alias: 'Name', type: 1 }),
+        makeElement({ id: 2, name: 'Title', alias: 'Title', type: 1 }),
+        makeElement({ id: 12, name: 'Size', alias: 'Size', type: 9, listId: 1 }),
+      ];
+
+      const result = await resolver.buildElements(
+        { Title: 'Hello', Size: 'Large' },
+        elements,
+        'My Item',
+        'en',
+        10,
+      );
+
+      expect(result['Name#1:1']).toBe('My Item');
+      expect(result['Title#2:1']).toBe('Hello');
+      // Radio/list value resolved to listId:itemId
+      expect(result['Size#12:9']).toBe('1:1');
+    });
+
+    it('throws on an unknown field', async () => {
+      const elements: TemplateElement[] = [
+        makeElement({ id: 1, name: 'Name', alias: 'Name', type: 1 }),
+      ];
+      await expect(
+        resolver.buildElements({ Nope: 'x' }, elements, 'N', 'en', 10),
+      ).rejects.toThrow('Unknown field "Nope"');
+    });
+
+    it('routes repeater fields through buildRepeaterValue', async () => {
+      const repeaterSub: TemplateElement[] = [
+        makeElement({ id: 1, name: 'Name', alias: 'Name', type: 1 }),
+        makeElement({ id: 2, name: 'Heading', alias: 'Heading', type: 1 }),
+      ];
+      const elements: TemplateElement[] = [
+        makeElement({ id: 1, name: 'Name', alias: 'Name', type: 1 }),
+        makeElement({
+          id: 5, name: 'Slides', alias: 'Slides', type: 19,
+          contentTypeElementConfiguration: {
+            contentTypeId: 99,
+            contentTypeDTO: { id: 99, contentTypeElements: repeaterSub },
+            minRepeats: 0,
+            maxRepeats: 10,
+          },
+        }),
+      ];
+
+      const result = await resolver.buildElements(
+        { Slides: [{ name: 'Slide 1', fields: { Heading: 'H1' } }] },
+        elements,
+        'Deck',
+        'en',
+        10,
+      );
+
+      const slides = result['Slides#5:19'] as Array<{
+        repeaterId: number;
+        repeaterContent: { name: string; elements: Record<string, unknown> };
+      }>;
+      expect(slides).toHaveLength(1);
+      expect(slides[0].repeaterId).toBeLessThan(0);
+      expect(slides[0].repeaterContent.name).toBe('Slide 1');
+      expect(slides[0].repeaterContent.elements['Heading#2:1']).toBe('H1');
+      expect(slides[0].repeaterContent.elements['Name#1:1']).toBe('Slide 1');
+    });
+  });
+
+  describe('buildRepeaterValue', () => {
+    const repeaterSub: TemplateElement[] = [
+      makeElement({ id: 1, name: 'Name', alias: 'Name', type: 1 }),
+      makeElement({ id: 2, name: 'Heading', alias: 'Heading', type: 1 }),
+    ];
+    const repeaterEl = makeElement({
+      id: 5, name: 'Slides', alias: 'Slides', type: 19,
+      contentTypeElementConfiguration: {
+        contentTypeId: 99,
+        contentTypeDTO: { id: 99, contentTypeElements: repeaterSub },
+        minRepeats: 0,
+        maxRepeats: 10,
+      },
+    });
+
+    it('wraps each item in repeaterId/repeaterContent with resolved element keys', async () => {
+      const result = await resolver.buildRepeaterValue(
+        [
+          { name: 'A', fields: { Heading: 'HA' } },
+          { name: 'B', fields: { Heading: 'HB' } },
+        ],
+        repeaterEl,
+        'en',
+        10,
+      ) as Array<{ repeaterId: number; repeaterContent: { name: string; elements: Record<string, unknown> } }>;
+
+      expect(result).toHaveLength(2);
+      expect(result[0].repeaterContent.elements['Heading#2:1']).toBe('HA');
+      expect(result[1].repeaterContent.elements['Heading#2:1']).toBe('HB');
+      // Distinct negative repeater IDs
+      expect(result[0].repeaterId).toBeLessThan(0);
+      expect(result[1].repeaterId).toBeLessThan(0);
+    });
+
+    it('returns items unchanged when the repeater has no sub-content type elements', async () => {
+      const bareEl = makeElement({ id: 6, name: 'Empty', alias: 'Empty', type: 19 });
+      const items = [{ name: 'X', fields: { Foo: 'bar' } }];
+      const result = await resolver.buildRepeaterValue(items, bareEl, 'en', 10);
+      expect(result).toBe(items);
+    });
+  });
 });
