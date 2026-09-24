@@ -292,4 +292,35 @@ describe('GroupResource', () => {
     await resource.delete(42);
     expect(http.request).toHaveBeenCalledWith({ method: 'DELETE', path: '/group/42' });
   });
+
+  describe('name validation guard', () => {
+    function setupGet() {
+      const calls: Array<{ method: string; path: string }> = [];
+      (http.request as ReturnType<typeof vi.fn>).mockImplementation(async (opts: { method: string; path: string }) => {
+        calls.push(opts);
+        if (opts.method === 'GET') return {
+          id: 1, name: 'Old', description: '', membersCount: 1, enabled: true, ldap: false,
+          children: [], groupChildren: [], defaultPreviewChannel: 0,
+          members: [{ id: 30, username: 'admin', firstName: 'A', lastName: 'B', authLevel: 0, emailAddress: 'a@b.com' }],
+        };
+        if (opts.method === 'PUT') return undefined;
+        throw new Error(`Unexpected: ${opts.method} ${opts.path}`);
+      });
+      return calls;
+    }
+
+    it('update(id, { name: "" }) rejects and sends no PUT', async () => {
+      const calls = setupGet();
+      await expect(resource.update(1, { name: '' })).rejects.toThrow('Group name is required');
+      expect(calls.find((c) => c.method === 'PUT')).toBeUndefined();
+    });
+
+    it('get() then name = "" then save() rejects and sends no PUT', async () => {
+      const calls = setupGet();
+      const group = await resource.get(1);
+      group.name = '   ';
+      await expect(group.save()).rejects.toThrow('Group name is required');
+      expect(calls.find((c) => c.method === 'PUT')).toBeUndefined();
+    });
+  });
 });

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach, beforeAll } from 'vitest';
-import { resolveLanguage, toTimestamp, decodeHtmlEntities, debugWarn, invalidateAllCaches, parseFileSize, normaliseBaseUrl, assertNotBrowser, readPrimaryGroup, readSharedGroups, writePrimaryGroup, writeSharedGroups, assertGroupsValid } from '../src/utils.js';
+import { resolveLanguage, toTimestamp, decodeHtmlEntities, debugWarn, invalidateAllCaches, parseFileSize, normaliseBaseUrl, assertNotBrowser, readPrimaryGroup, readSharedGroups, writePrimaryGroup, writeSharedGroups, assertGroupsValid, assertRequired, assertNotEmptyIfPresent } from '../src/utils.js';
 
 describe('resolveLanguage', () => {
   it('returns override when provided', () => {
@@ -446,5 +446,49 @@ describe('assertGroupsValid', () => {
 
   it('mentions both fields in the error message', () => {
     expect(() => assertGroupsValid(7, [7])).toThrow(/primary \(owning\) group and a shared group/);
+  });
+});
+
+describe('assertRequired', () => {
+  it('passes for a non-empty string', () => {
+    expect(() => assertRequired('Hello', 'Name')).not.toThrow();
+  });
+
+  it('throws "<label> is required" for undefined', () => {
+    expect(() => assertRequired(undefined, 'Name')).toThrow('Name is required');
+  });
+
+  it('throws for null', () => {
+    expect(() => assertRequired(null, 'Layout name')).toThrow('Layout name is required');
+  });
+
+  it('throws for an empty string', () => {
+    expect(() => assertRequired('', 'Section name')).toThrow('Section name is required');
+  });
+
+  it('throws for a whitespace-only string', () => {
+    expect(() => assertRequired('   ', 'Group name')).toThrow('Group name is required');
+  });
+});
+
+describe('assertNotEmptyIfPresent', () => {
+  it('passes when the value is omitted (undefined)', () => {
+    expect(() => assertNotEmptyIfPresent(undefined, 'Name')).not.toThrow();
+  });
+
+  it('passes when the value is null', () => {
+    expect(() => assertNotEmptyIfPresent(null, 'Name')).not.toThrow();
+  });
+
+  it('passes for a non-empty string', () => {
+    expect(() => assertNotEmptyIfPresent('Hello', 'Name')).not.toThrow();
+  });
+
+  it('throws "<label> cannot be empty" for an empty string', () => {
+    expect(() => assertNotEmptyIfPresent('', 'Section name')).toThrow('Section name cannot be empty');
+  });
+
+  it('throws for a whitespace-only string', () => {
+    expect(() => assertNotEmptyIfPresent('   ', 'Content name')).toThrow('Content name cannot be empty');
   });
 });

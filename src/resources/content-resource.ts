@@ -5,7 +5,7 @@ import {
   UpdateContentData,
   ContentDTO,
 } from '../types.js';
-import { resolveLanguage, toTimestamp, STATUS_CODES } from '../utils.js';
+import { resolveLanguage, toTimestamp, STATUS_CODES, assertRequired, assertNotEmptyIfPresent } from '../utils.js';
 import { ContentItem, createContentItem } from '../models/content-item.js';
 import { ElementResolver, TemplateElement, ResolveContext, MediaCreateFn } from '../element-resolver.js';
 import { TypeRegistry } from '../type-registry.js';
@@ -178,6 +178,7 @@ export class ContentResource {
 
   /** Creates a new content item in this section. */
   async create(data: CreateContentData, options?: LanguageOption): Promise<ContentItem> {
+    assertRequired(data.name, 'Content name');
     const language = resolveLanguage(options?.language, this.defaultLanguage);
 
     const template = await this.getTemplate(data.type);
@@ -227,6 +228,7 @@ export class ContentResource {
 
   /** Updates an existing content item's fields. */
   async update(id: number, data: UpdateContentData, options?: LanguageOption): Promise<ContentItem> {
+    assertNotEmptyIfPresent(data.name, 'Content name');
     const language = resolveLanguage(options?.language, this.defaultLanguage);
 
     // 1. Fetch the existing content (full body needed for the POST)

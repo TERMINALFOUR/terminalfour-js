@@ -1,5 +1,5 @@
 import { HttpClient } from '../http-client.js';
-import { decodeHtmlEntities, DEFAULT_CACHE_TTL, getCacheEpoch, readPrimaryGroup, readSharedGroups, writePrimaryGroup, writeSharedGroups, assertGroupsValid, RawPrimaryGroup } from '../utils.js';
+import { decodeHtmlEntities, DEFAULT_CACHE_TTL, getCacheEpoch, readPrimaryGroup, readSharedGroups, writePrimaryGroup, writeSharedGroups, assertGroupsValid, assertRequired, RawPrimaryGroup } from '../utils.js';
 
 /** Friendly processor keys mapped to API names for page layouts */
 const PAGE_PROCESSOR_MAP: Record<string, string> = {
@@ -89,6 +89,7 @@ export class PageLayout {
 
   /** Persists current property values to the server via PUT. */
   async save(): Promise<void> {
+    assertRequired(this.name, 'Page layout name');
     assertGroupsValid(this.primaryGroup, this.sharedGroups);
 
     // Resolve syntax name to ID

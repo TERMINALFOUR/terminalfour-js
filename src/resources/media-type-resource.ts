@@ -1,5 +1,5 @@
 import { HttpClient } from '../http-client.js';
-import { formatFileSize, parseFileSize } from '../utils.js';
+import { formatFileSize, parseFileSize, assertRequired } from '../utils.js';
 
 /** Layout (formatter) for a media type */
 export interface MediaTypeLayout {
@@ -126,6 +126,8 @@ export class MediaType implements MediaTypeData {
 
   /** Persists current property values to the server via PUT. */
   async save(): Promise<void> {
+    assertRequired(this.name, 'Media type name');
+
     // Sync defaultLayout into the layouts array
     if (this.defaultLayout) {
       for (const layout of this.layouts) {

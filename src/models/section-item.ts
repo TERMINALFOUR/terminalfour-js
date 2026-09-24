@@ -1,5 +1,5 @@
 import { HttpClient } from '../http-client.js';
-import { mapStatus, STATUS_CODES } from '../utils.js';
+import { mapStatus, STATUS_CODES, assertRequired } from '../utils.js';
 import { ApiSectionDTO } from '../types.js';
 import { ContentResource } from '../resources/content-resource.js';
 import { MediaCreateFn } from '../element-resolver.js';
@@ -62,6 +62,8 @@ export class SectionItem {
 
   /** Persists current property values to the server via PUT. */
   async save(): Promise<void> {
+    assertRequired(this.name, 'Section name');
+
     const statusCode = STATUS_CODES[this.status] ?? Number(this._rawData.status) ?? 0;
 
     const updated = {

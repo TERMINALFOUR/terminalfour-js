@@ -60,6 +60,26 @@ describe('SectionItem', () => {
   });
 
   describe('save()', () => {
+    it('rejects when name is empty and sends no request', async () => {
+      const http = mockHttpClient();
+
+      const item = new SectionItem(rawSection, http, 'en');
+      item.name = '';
+      await expect(item.save()).rejects.toThrow('Section name is required');
+
+      expect(http.request).not.toHaveBeenCalled();
+    });
+
+    it('rejects when name is whitespace-only and sends no request', async () => {
+      const http = mockHttpClient();
+
+      const item = new SectionItem(rawSection, http, 'en');
+      item.name = '   ';
+      await expect(item.save()).rejects.toThrow('Section name is required');
+
+      expect(http.request).not.toHaveBeenCalled();
+    });
+
     it('sends PUT with full section body and updated name', async () => {
       const http = mockHttpClient();
       (http.request as ReturnType<typeof vi.fn>).mockResolvedValueOnce(undefined);

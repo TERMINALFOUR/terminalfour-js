@@ -2677,6 +2677,35 @@ describe('NavigationResource', () => {
     });
   });
 
+  describe('name validation guard', () => {
+    function setupGet() {
+      const calls: Array<{ method: string; path: string }> = [];
+      (http.request as ReturnType<typeof vi.fn>).mockImplementation(async (opts: { method: string; path: string }) => {
+        calls.push(opts);
+        if (opts.method === 'GET' && opts.path === '/navigation/181') return rawA2zDetail;
+        if (opts.method === 'PUT' && opts.path === '/navigation/181') return undefined;
+        throw new Error(`Unexpected: ${opts.method} ${opts.path}`);
+      });
+      return calls;
+    }
+
+    it('update(id, { name: "" }) rejects with "cannot be empty" and sends no PUT', async () => {
+      const calls = setupGet();
+      await expect(resource.update(181, { name: '' }))
+        .rejects.toThrow('Navigation object name cannot be empty');
+      expect(calls.find((c) => c.method === 'PUT')).toBeUndefined();
+    });
+
+    it('get() then name = "" then save() rejects with "is required" and sends no PUT', async () => {
+      const calls = setupGet();
+      const nav = await resource.get(181);
+      nav.name = '   ';
+      await expect(nav.save())
+        .rejects.toThrow('Navigation object name is required');
+      expect(calls.find((c) => c.method === 'PUT')).toBeUndefined();
+    });
+  });
+
   describe('group / visibility', () => {
     function mockGetAndPut() {
       (http.request as ReturnType<typeof vi.fn>).mockImplementation(async (opts: { method: string; path: string }) => {

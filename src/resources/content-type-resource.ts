@@ -1,6 +1,6 @@
 import { HttpClient } from '../http-client.js';
 import { ContentTypeData, ContentTypeFieldDef } from '../types.js';
-import { decodeHtmlEntities, AUTH_LEVEL_MAP, AUTH_LEVEL_REVERSE, debugWarn, DEFAULT_CACHE_TTL, getCacheEpoch, invalidateAllCaches, readPrimaryGroup, readSharedGroups, writePrimaryGroup, writeSharedGroups, assertGroupsValid, RawPrimaryGroup } from '../utils.js';
+import { decodeHtmlEntities, AUTH_LEVEL_MAP, AUTH_LEVEL_REVERSE, debugWarn, DEFAULT_CACHE_TTL, getCacheEpoch, invalidateAllCaches, readPrimaryGroup, readSharedGroups, writePrimaryGroup, writeSharedGroups, assertGroupsValid, assertRequired, assertNotEmptyIfPresent, RawPrimaryGroup } from '../utils.js';
 
 /** Raw content type element from the API response */
 interface ApiContentTypeElement {
@@ -389,6 +389,8 @@ export class ContentType implements ContentTypeData {
       },
 
       update: async (layoutName: string, updateData: UpdateLayoutData) => {
+        assertNotEmptyIfPresent(updateData.name, 'Layout name');
+
         const all = await fetchLayouts();
         const match = all.find((l) => l.name === layoutName);
         if (!match) throw new Error(`Layout "${layoutName}" not found on this content type`);
@@ -439,6 +441,8 @@ export class ContentType implements ContentTypeData {
       },
 
       create: async (createData: CreateLayoutData) => {
+        assertRequired(createData.name, 'Layout name');
+
         // Check name uniqueness
         const existing = await fetchLayouts();
         if (existing.some((l) => l.name === createData.name)) {
@@ -790,6 +794,7 @@ export class ContentType implements ContentTypeData {
 
   /** Persists current property values to the server via PUT. */
   async save(): Promise<void> {
+    assertRequired(this.name, 'Content type name');
     assertGroupsValid(this.primaryGroup, this.sharedGroups);
 
     const authLevel = String(AUTH_LEVEL_REVERSE[this.minUserLevel] ?? this._rawData.minAuthLevel ?? 2);

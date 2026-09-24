@@ -725,6 +725,34 @@ describe('SectionRef', () => {
       });
     }
 
+    it('rejects with empty name and sends no POST /hierarchy/', async () => {
+      const calls: Array<{ method: string; path: string }> = [];
+      (http.request as ReturnType<typeof vi.fn>).mockImplementation(async (opts: { method: string; path: string }) => {
+        calls.push(opts);
+        if (opts.method === 'GET' && opts.path === '/hierarchy/233/en') return parentSection;
+        throw new Error(`Unexpected: ${opts.method} ${opts.path}`);
+      });
+
+      await expect(ref.addSection({ name: '' })).rejects.toThrow('Section name is required');
+
+      const postCall = calls.find((c) => c.method === 'POST' && c.path.startsWith('/hierarchy/'));
+      expect(postCall).toBeUndefined();
+    });
+
+    it('rejects with whitespace-only name and sends no POST /hierarchy/', async () => {
+      const calls: Array<{ method: string; path: string }> = [];
+      (http.request as ReturnType<typeof vi.fn>).mockImplementation(async (opts: { method: string; path: string }) => {
+        calls.push(opts);
+        if (opts.method === 'GET' && opts.path === '/hierarchy/233/en') return parentSection;
+        throw new Error(`Unexpected: ${opts.method} ${opts.path}`);
+      });
+
+      await expect(ref.addSection({ name: '   ' })).rejects.toThrow('Section name is required');
+
+      const postCall = calls.find((c) => c.method === 'POST' && c.path.startsWith('/hierarchy/'));
+      expect(postCall).toBeUndefined();
+    });
+
     it('fetches parent section details', async () => {
       setupAddSectionMocks();
       await ref.addSection({ name: 'Child' });
@@ -1078,6 +1106,50 @@ describe('SectionRef', () => {
       id: 233, name: 'Old Name', parent: 100, status: '0', show: true,
       channels: [{ id: 1, pageLayout: 5, inheritedPageLayout: 6 }],
     };
+
+    it('rejects update({ name: "" }) with "cannot be empty" and sends no PUT', async () => {
+      const calls: Array<{ method: string; path: string }> = [];
+      (http.request as ReturnType<typeof vi.fn>).mockImplementation(async (opts: { method: string; path: string }) => {
+        calls.push(opts);
+        if (opts.method === 'GET' && opts.path === '/hierarchy/233/en') return currentSection;
+        if (opts.method === 'PUT' && opts.path === '/hierarchy/233/en') return undefined;
+        throw new Error(`Unexpected: ${opts.method} ${opts.path}`);
+      });
+
+      await expect(ref.update({ name: '' })).rejects.toThrow('Section name cannot be empty');
+
+      const putCall = calls.find((c) => c.method === 'PUT');
+      expect(putCall).toBeUndefined();
+    });
+
+    it('rejects update({ name: "   " }) with "cannot be empty" and sends no PUT', async () => {
+      const calls: Array<{ method: string; path: string }> = [];
+      (http.request as ReturnType<typeof vi.fn>).mockImplementation(async (opts: { method: string; path: string }) => {
+        calls.push(opts);
+        if (opts.method === 'GET' && opts.path === '/hierarchy/233/en') return currentSection;
+        if (opts.method === 'PUT' && opts.path === '/hierarchy/233/en') return undefined;
+        throw new Error(`Unexpected: ${opts.method} ${opts.path}`);
+      });
+
+      await expect(ref.update({ name: '   ' })).rejects.toThrow('Section name cannot be empty');
+
+      const putCall = calls.find((c) => c.method === 'PUT');
+      expect(putCall).toBeUndefined();
+    });
+
+    it('update({ status: "inactive" }) with no name still works (protects delete path)', async () => {
+      let putBody: unknown = null;
+      (http.request as ReturnType<typeof vi.fn>).mockImplementation(async (opts: { method: string; path: string; body?: unknown }) => {
+        if (opts.method === 'GET' && opts.path === '/hierarchy/233/en') return { ...currentSection, status: putBody ? '2' : '0' };
+        if (opts.method === 'PUT' && opts.path === '/hierarchy/233/en') { putBody = opts.body; return undefined; }
+        throw new Error(`Unexpected: ${opts.method} ${opts.path}`);
+      });
+
+      const result = await ref.update({ status: 'inactive' });
+
+      expect((putBody as Record<string, unknown>).status).toBe('2');
+      expect(result.status).toBe('inactive');
+    });
 
     it('fetches current section, PUTs with merged updates, and returns SectionItem', async () => {
       let putBody: unknown = null;

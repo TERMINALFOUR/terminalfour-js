@@ -1,5 +1,5 @@
 import { HttpClient } from '../http-client.js';
-import { formatFileSize, parseElementKey, STATUS_MAP, resolveFileToBlob, deriveFilename, FileInput } from '../utils.js';
+import { formatFileSize, parseElementKey, STATUS_MAP, resolveFileToBlob, deriveFilename, FileInput, assertRequired } from '../utils.js';
 
 /** Extension → syntax type mapping for non-binary media */
 const EXTENSION_SYNTAX_MAP: Record<string, number> = {
@@ -148,6 +148,8 @@ export class MediaItem {
    * If `content` has changed on non-binary media, the version is bumped.
    */
   async save(): Promise<void> {
+    assertRequired(this.name, 'Media name');
+
     const categoryId = this.categories[0];
     if (!categoryId) {
       throw new Error('Cannot save media item — no category assigned.');

@@ -519,6 +519,36 @@ describe('Handlebars', () => {
     });
 
     describe('save() — helper', () => {
+      it('rejects when name is empty and sends no save POST', async () => {
+        const item = new HandlebarsItem(helperDTO, http, HELPERS_SECTION_ID, 'en', 'function code');
+        item.name = '';
+
+        await expect(item.save()).rejects.toThrow('Name is required');
+
+        const saveCall = (http.request as ReturnType<typeof vi.fn>).mock.calls.find(
+          (c: unknown[]) => {
+            const o = c[0] as { method: string; path: string };
+            return o.method === 'POST' && o.path === `/content/${HELPERS_SECTION_ID}/100/en`;
+          },
+        );
+        expect(saveCall).toBeUndefined();
+      });
+
+      it('rejects when name is whitespace-only and sends no save POST', async () => {
+        const item = new HandlebarsItem(helperDTO, http, HELPERS_SECTION_ID, 'en', 'function code');
+        item.name = '   ';
+
+        await expect(item.save()).rejects.toThrow('Name is required');
+
+        const saveCall = (http.request as ReturnType<typeof vi.fn>).mock.calls.find(
+          (c: unknown[]) => {
+            const o = c[0] as { method: string; path: string };
+            return o.method === 'POST' && o.path === `/content/${HELPERS_SECTION_ID}/100/en`;
+          },
+        );
+        expect(saveCall).toBeUndefined();
+      });
+
       it('sends the full body with approved status and updates internal state', async () => {
         const item = new HandlebarsItem(helperDTO, http, HELPERS_SECTION_ID, 'en', 'function code');
         item.name = 'updatedName';

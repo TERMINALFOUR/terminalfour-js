@@ -1,5 +1,5 @@
 import { HttpClient } from '../http-client.js';
-import { AUTH_LEVEL_MAP } from '../utils.js';
+import { AUTH_LEVEL_MAP, assertRequired } from '../utils.js';
 
 /** Raw group from the API */
 interface RawGroup {
@@ -121,6 +121,8 @@ export class Group {
 
   /** Persists current property values to the server via PUT. */
   async save(): Promise<void> {
+    assertRequired(this.name, 'Group name');
+
     // Start from existing raw members
     let rawMembers = [...(this._rawData.members ?? [])];
 

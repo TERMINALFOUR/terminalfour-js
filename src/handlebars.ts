@@ -1,6 +1,6 @@
 import { HttpClient } from './http-client.js';
 import { ContentDTO } from './types.js';
-import { DEFAULT_CACHE_TTL, getCacheEpoch } from './utils.js';
+import { DEFAULT_CACHE_TTL, getCacheEpoch, assertRequired } from './utils.js';
 
 /** Config endpoint response shape */
 interface ConfigResponse {
@@ -78,6 +78,8 @@ export class HandlebarsItem {
    * Always saves with approved status.
    */
   async save(): Promise<void> {
+    assertRequired(this.name, 'Name');
+
     // Update elements with current name and code
     const elements = { ...this._rawDTO.elements };
     for (const key of Object.keys(elements)) {

@@ -1898,4 +1898,87 @@ describe('ContentTypeResource', () => {
       expect(getCacheEpoch()).toBeGreaterThan(before);
     });
   });
+  describe('name validation guards', () => {
+    const fullCt = {
+      id: 343, name: 'All elements', alias: 'All elements', description: 'Test CT',
+      minAuthLevel: 2, workflow: 0, enableDirectEdit: true, sharedGroups: [],
+      contentTypeElements: [],
+    };
+
+    it('layouts.create() with empty name rejects and sends no PUT to /layout/', async () => {
+      const calls: Array<{ method: string; path: string }> = [];
+      (http.request as ReturnType<typeof vi.fn>).mockImplementation(async (opts: { method: string; path: string }) => {
+        calls.push(opts);
+        if (opts.path === '/type/') return ELEMENT_TYPES;
+        if (opts.path === '/htmlEditor') return HTML_EDITORS;
+        if (opts.path === '/contenttype/343') return { id: 343, name: 'All', alias: 'all', contentTypeElements: [] };
+        if (opts.path === '/contenttype/?excludeElements=true') return [{ id: 2, name: 'Content Layout', type: 30 }];
+        if (opts.path === '/contenttype/2') return layoutContentType;
+        if (opts.path === '/layout/contenttype/343/en') return [];
+        throw new Error(`Unexpected: ${opts.method} ${opts.path}`);
+      });
+
+      const ct = await resource.get(343);
+      await expect(ct.layouts.create({ name: '', code: 'Hello' })).rejects.toThrow('Layout name is required');
+
+      const putCall = calls.find((c) => c.method === 'PUT' && c.path.startsWith('/layout/'));
+      expect(putCall).toBeUndefined();
+    });
+
+    it('layouts.update() with empty name rejects with "cannot be empty" and sends no PUT', async () => {
+      const calls: Array<{ method: string; path: string }> = [];
+      (http.request as ReturnType<typeof vi.fn>).mockImplementation(async (opts: { method: string; path: string }) => {
+        calls.push(opts);
+        if (opts.path === '/type/') return ELEMENT_TYPES;
+        if (opts.path === '/htmlEditor') return HTML_EDITORS;
+        if (opts.path === '/contenttype/343') return { id: 343, name: 'All', alias: 'all', contentTypeElements: [] };
+        if (opts.path === '/contenttype/?excludeElements=true') return [{ id: 2, name: 'Content Layout', type: 30 }];
+        if (opts.path === '/contenttype/2') return layoutContentType;
+        if (opts.path === '/layout/contenttype/343/en') return [{ id: 100, name: 'text/html', lastModified: 0 }];
+        throw new Error(`Unexpected: ${opts.method} ${opts.path}`);
+      });
+
+      const ct = await resource.get(343);
+      await expect(ct.layouts.update('text/html', { name: '' })).rejects.toThrow('Layout name cannot be empty');
+
+      const putCall = calls.find((c) => c.method === 'PUT' && c.path.startsWith('/layout/'));
+      expect(putCall).toBeUndefined();
+    });
+
+    it('update(id, { name: "" }) rejects and sends no PUT', async () => {
+      const calls: Array<{ method: string; path: string }> = [];
+      (http.request as ReturnType<typeof vi.fn>).mockImplementation(async (opts: { method: string; path: string }) => {
+        calls.push(opts);
+        if (opts.path === '/type/') return ELEMENT_TYPES;
+        if (opts.path === '/htmlEditor') return HTML_EDITORS;
+        if (opts.method === 'GET' && opts.path === '/contenttype/343') return fullCt;
+        if (opts.method === 'PUT' && opts.path === '/contenttype/343') return undefined;
+        throw new Error(`Unexpected: ${opts.method} ${opts.path}`);
+      });
+
+      await expect(resource.update(343, { name: '' })).rejects.toThrow('Content type name is required');
+
+      const putCall = calls.find((c) => c.method === 'PUT');
+      expect(putCall).toBeUndefined();
+    });
+
+    it('get() then name = "" then save() rejects and sends no PUT', async () => {
+      const calls: Array<{ method: string; path: string }> = [];
+      (http.request as ReturnType<typeof vi.fn>).mockImplementation(async (opts: { method: string; path: string }) => {
+        calls.push(opts);
+        if (opts.path === '/type/') return ELEMENT_TYPES;
+        if (opts.path === '/htmlEditor') return HTML_EDITORS;
+        if (opts.method === 'GET' && opts.path === '/contenttype/343') return fullCt;
+        if (opts.method === 'PUT' && opts.path === '/contenttype/343') return undefined;
+        throw new Error(`Unexpected: ${opts.method} ${opts.path}`);
+      });
+
+      const ct = await resource.get(343);
+      ct.name = '   ';
+      await expect(ct.save()).rejects.toThrow('Content type name is required');
+
+      const putCall = calls.find((c) => c.method === 'PUT');
+      expect(putCall).toBeUndefined();
+    });
+  });
 });

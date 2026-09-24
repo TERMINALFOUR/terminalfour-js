@@ -411,4 +411,31 @@ describe('MediaTypeResource', () => {
       expect(mt.parseForTags).toBe(false);
     });
   });
+
+  describe('name validation guard', () => {
+    function setupGet() {
+      const calls: Array<{ method: string; path: string }> = [];
+      (http.request as ReturnType<typeof vi.fn>).mockImplementation(async (opts: { method: string; path: string }) => {
+        calls.push(opts);
+        if (opts.method === 'GET' && opts.path === '/mediaType/1') return rawGetResponse;
+        if (opts.method === 'PUT' && opts.path === '/mediaType/1') return undefined;
+        throw new Error(`Unexpected: ${opts.method} ${opts.path}`);
+      });
+      return calls;
+    }
+
+    it('update(id, { name: "" }) rejects and sends no PUT', async () => {
+      const calls = setupGet();
+      await expect(resource.update(1, { name: '' })).rejects.toThrow('Media type name is required');
+      expect(calls.find((c) => c.method === 'PUT')).toBeUndefined();
+    });
+
+    it('get() then name = "" then save() rejects and sends no PUT', async () => {
+      const calls = setupGet();
+      const mt = await resource.get(1);
+      mt.name = '   ';
+      await expect(mt.save()).rejects.toThrow('Media type name is required');
+      expect(calls.find((c) => c.method === 'PUT')).toBeUndefined();
+    });
+  });
 });

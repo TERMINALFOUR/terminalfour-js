@@ -1,5 +1,5 @@
 import { HttpClient } from '../http-client.js';
-import { readPrimaryGroup, readSharedGroups, writePrimaryGroup, writeSharedGroups, assertGroupsValid, RawPrimaryGroup } from '../utils.js';
+import { readPrimaryGroup, readSharedGroups, writePrimaryGroup, writeSharedGroups, assertGroupsValid, assertRequired, RawPrimaryGroup } from '../utils.js';
 
 /** SDK-friendly navigation type codes (consistent kebab-case) */
 export type NavigationType =
@@ -1154,6 +1154,7 @@ export class NavigationObject {
 
   /** Persists current property values to the server via PUT. */
   async save(): Promise<void> {
+    assertRequired(this.name, 'Navigation object name');
     assertGroupsValid(this.primaryGroup, this.sharedGroups);
 
     // Apply type-aware write transformation (coerce back to strings, derive hidden fields)

@@ -328,7 +328,7 @@ await contentType.layouts.create({
 });
 ```
 
-Processor options are `'handlebars'`, `'t4-tags'`, and `'programmable-layouts'`. The default is `'handlebars'`. The SDK enforces unique layout names.
+Processor options are `'handlebars'`, `'t4-tags'`, and `'programmable-layouts'`. The default is `'handlebars'`. The SDK enforces unique layout names. `name` is required (throws `Layout name is required` if empty); `code` is optional and may be empty. Renaming a layout to an empty string on update is rejected.
 
 ### Direct update
 

@@ -1,7 +1,7 @@
 import { HttpClient } from '../http-client.js';
 import { resolveLanguage } from '../utils.js';
 import { LanguageOption } from '../types.js';
-import { decodeHtmlEntities, readPrimaryGroup, readSharedGroups, writePrimaryGroup, writeSharedGroups, assertGroupsValid, RawPrimaryGroup } from '../utils.js';
+import { decodeHtmlEntities, readPrimaryGroup, readSharedGroups, writePrimaryGroup, writeSharedGroups, assertGroupsValid, assertRequired, RawPrimaryGroup } from '../utils.js';
 
 /** Raw list from GET /list/{language} */
 interface RawListSummary {
@@ -115,6 +115,7 @@ export class List {
 
   /** Persists current property values to the server via PUT. */
   async save(): Promise<void> {
+    assertRequired(this.name, 'List name');
     if (this.isForcedLanguage && this.isDefaultLanguage) {
       throw new Error('isForcedLanguage and isDefaultLanguage cannot both be true');
     }

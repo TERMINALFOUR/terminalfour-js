@@ -306,4 +306,37 @@ describe('PageLayoutResource', () => {
       ).rejects.toThrow('sharedGroups cannot contain the primaryGroup id (35)');
     });
   });
+
+  describe('name validation guard', () => {
+    function setupGet() {
+      const calls: Array<{ method: string; path: string }> = [];
+      (http.request as ReturnType<typeof vi.fn>).mockImplementation(async (opts: { method: string; path: string }) => {
+        calls.push(opts);
+        if (opts.path === '/pageLayout/5') return {
+          id: 5, name: 'HC page', description: '',
+          headerCode: '<html>', footerCode: '</html>', stylesheetCode: '',
+          fileExtension: '', syntaxType: 3, layoutProcessor: 1,
+        };
+        if (opts.path === '/syntaxType') return [{ id: 3, name: 'HTML/XML' }, { id: 1, name: 'Javascript' }];
+        if (opts.path === '/publishProcessor/10') return [{ id: 1, name: 'T4 Tag Page' }, { id: 15, name: 'Handlebars Page' }];
+        if (opts.method === 'PUT' && opts.path === '/pageLayout/5') return undefined;
+        throw new Error(`Unexpected: ${opts.method} ${opts.path}`);
+      });
+      return calls;
+    }
+
+    it('update(id, { name: "" }) rejects and sends no PUT', async () => {
+      const calls = setupGet();
+      await expect(resource.update(5, { name: '' })).rejects.toThrow('Page layout name is required');
+      expect(calls.find((c) => c.method === 'PUT')).toBeUndefined();
+    });
+
+    it('get() then name = "" then save() rejects and sends no PUT', async () => {
+      const calls = setupGet();
+      const layout = await resource.get(5);
+      layout.name = '   ';
+      await expect(layout.save()).rejects.toThrow('Page layout name is required');
+      expect(calls.find((c) => c.method === 'PUT')).toBeUndefined();
+    });
+  });
 });
