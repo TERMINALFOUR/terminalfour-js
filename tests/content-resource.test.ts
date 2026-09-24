@@ -747,4 +747,43 @@ describe('ContentResource', () => {
       expect((approveCall![0] as { path: string }).path).toBe('/content/fr');
     });
   });
+
+  describe('name validation guard', () => {
+    it('create() with empty name rejects and sends no POST /content/', async () => {
+      const calls: Array<{ method: string; path: string }> = [];
+      (http.request as ReturnType<typeof vi.fn>).mockImplementation(async (opts: { method: string; path: string }) => {
+        calls.push(opts);
+        if (opts.path === '/type/') return ELEMENT_TYPES;
+        if (opts.path === '/content/type/44/233') return mockTemplate;
+        if (opts.path === '/contenttype/44') return mockRawContentType;
+        if (opts.path.startsWith('/list/1/')) return sizeList;
+        if (opts.method === 'POST' && opts.path.startsWith('/content/233/en')) return createdDTO;
+        throw new Error(`Unexpected request: ${opts.method} ${opts.path}`);
+      });
+
+      await expect(resource.create({ type: 44, name: '', fields: {} }))
+        .rejects.toThrow('Content name is required');
+
+      const postCall = calls.find((c) => c.method === 'POST' && c.path.startsWith('/content/'));
+      expect(postCall).toBeUndefined();
+    });
+
+    it('create() with whitespace-only name rejects and sends no POST /content/', async () => {
+      const calls: Array<{ method: string; path: string }> = [];
+      (http.request as ReturnType<typeof vi.fn>).mockImplementation(async (opts: { method: string; path: string }) => {
+        calls.push(opts);
+        if (opts.path === '/type/') return ELEMENT_TYPES;
+        if (opts.path === '/content/type/44/233') return mockTemplate;
+        if (opts.path === '/contenttype/44') return mockRawContentType;
+        if (opts.method === 'POST' && opts.path.startsWith('/content/233/en')) return createdDTO;
+        throw new Error(`Unexpected request: ${opts.method} ${opts.path}`);
+      });
+
+      await expect(resource.create({ type: 44, name: '   ', fields: {} }))
+        .rejects.toThrow('Content name is required');
+
+      const postCall = calls.find((c) => c.method === 'POST' && c.path.startsWith('/content/'));
+      expect(postCall).toBeUndefined();
+    });
+  });
 });

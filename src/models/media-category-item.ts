@@ -1,4 +1,5 @@
 import { HttpClient } from '../http-client.js';
+import { assertRequired } from '../utils.js';
 
 /** Raw media category shape from the T4 API */
 interface ApiMediaCategoryDTO {
@@ -38,6 +39,8 @@ export class MediaCategoryItem {
 
   /** Persists current property values to the server via PUT. */
   async save(): Promise<void> {
+    assertRequired(this.name, 'Media category name');
+
     const updated = {
       ...this._rawData,
       name: this.name,

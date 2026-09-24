@@ -51,6 +51,20 @@ describe('MediaCategoryItem', () => {
   });
 
   describe('save()', () => {
+    it('rejects when name is empty and sends no request', async () => {
+      const item = new MediaCategoryItem(rawCategory, http, 'en');
+      item.name = '';
+      await expect(item.save()).rejects.toThrow('Media category name is required');
+      expect(http.request).not.toHaveBeenCalled();
+    });
+
+    it('rejects when name is whitespace-only and sends no request', async () => {
+      const item = new MediaCategoryItem(rawCategory, http, 'en');
+      item.name = '   ';
+      await expect(item.save()).rejects.toThrow('Media category name is required');
+      expect(http.request).not.toHaveBeenCalled();
+    });
+
     it('sends PUT to /mediacategory/{id}/{language} with full body', async () => {
       (http.request as ReturnType<typeof vi.fn>).mockResolvedValueOnce(undefined);
 

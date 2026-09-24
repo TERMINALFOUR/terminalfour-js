@@ -366,4 +366,34 @@ describe('ListResource', () => {
     await resource.delete(76);
     expect(http.request).toHaveBeenCalledWith({ method: 'DELETE', path: '/list/76?override=false' });
   });
+
+  describe('name validation guard', () => {
+    function setupGet() {
+      const calls: Array<{ method: string; path: string }> = [];
+      (http.request as ReturnType<typeof vi.fn>).mockImplementation(async (opts: { method: string; path: string }) => {
+        calls.push(opts);
+        if (opts.method === 'GET') return {
+          id: 71, name: 'Old Name', description: 'Old', language: 'en',
+          isForcedLanguage: false, isDefaultLanguage: false, items: [],
+        };
+        if (opts.method === 'PUT') return undefined;
+        throw new Error(`Unexpected: ${opts.method} ${opts.path}`);
+      });
+      return calls;
+    }
+
+    it('update(id, { name: "" }) rejects and sends no PUT', async () => {
+      const calls = setupGet();
+      await expect(resource.update(71, { name: '' })).rejects.toThrow('List name is required');
+      expect(calls.find((c) => c.method === 'PUT')).toBeUndefined();
+    });
+
+    it('get() then name = "" then save() rejects and sends no PUT', async () => {
+      const calls = setupGet();
+      const list = await resource.get(71);
+      list.name = '   ';
+      await expect(list.save()).rejects.toThrow('List name is required');
+      expect(calls.find((c) => c.method === 'PUT')).toBeUndefined();
+    });
+  });
 });

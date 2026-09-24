@@ -239,6 +239,34 @@ export function assertGroupsValid(primaryGroup: number, sharedGroups?: number[])
   }
 }
 
+/**
+ * Asserts that a required string value is present and not blank.
+ *
+ * Use on create paths where the field must always be provided. Throws
+ * `"<Label> is required"` when the value is missing, empty, or whitespace-only.
+ * Prevents opaque API 500s from malformed requests missing a required field.
+ */
+export function assertRequired(value: string | null | undefined, label: string): void {
+  if (!value || !value.trim()) {
+    throw new Error(`${label} is required`);
+  }
+}
+
+/**
+ * Asserts that a value, *if provided*, is not blank.
+ *
+ * Use on update paths where a field is optional (omitting it leaves the
+ * current value unchanged) but explicitly setting it to an empty or
+ * whitespace-only string is invalid. `undefined` passes (means "no change");
+ * `''` or whitespace throws `"<Label> cannot be empty"`.
+ */
+export function assertNotEmptyIfPresent(value: string | null | undefined, label: string): void {
+  if (value === undefined || value === null) return;
+  if (!value.trim()) {
+    throw new Error(`${label} cannot be empty`);
+  }
+}
+
 
 /** Accepted file input: a file path, URL, Blob, ReadableStream, or { file, filename } object */
 export type FileInput = string | Blob | NodeJS.ReadableStream | { file: string | Blob | NodeJS.ReadableStream; filename?: string };

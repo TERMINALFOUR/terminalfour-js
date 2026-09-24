@@ -6,7 +6,7 @@ import {
   AddSectionData,
   ApiSectionDTO,
 } from './types.js';
-import { resolveLanguage, mapStatus, flattenGroups, STATUS_CODES, AUTH_LEVEL_MAP, debugWarn, DEFAULT_CACHE_TTL, getCacheEpoch } from './utils.js';
+import { resolveLanguage, mapStatus, flattenGroups, STATUS_CODES, AUTH_LEVEL_MAP, debugWarn, DEFAULT_CACHE_TTL, getCacheEpoch, assertRequired, assertNotEmptyIfPresent } from './utils.js';
 import { ContentResource } from './resources/content-resource.js';
 import { SectionItem } from './models/section-item.js';
 import { MediaCreateFn } from './element-resolver.js';
@@ -736,6 +736,7 @@ export class SectionRef {
    * If `data.customFields` is provided, creates and saves section metadata content.
    */
   async addSection(data: Omit<AddSectionData, 'parentId'>, options?: LanguageOption): Promise<SectionItem> {
+    assertRequired(data.name, 'Section name');
     const language = resolveLanguage(options?.language, this.defaultLanguage);
 
     // Fetch this section's details to inherit config
@@ -899,6 +900,10 @@ export class SectionRef {
     data: { name?: string; show?: boolean; status?: 'approved' | 'pending' | 'inactive'; customFields?: Record<string, unknown> },
     options?: LanguageOption,
   ): Promise<SectionItem> {
+    // This path PUTs directly (it does not go through SectionItem.save()), so
+    // guard the name here. Present-only: omitting name is valid (e.g. delete()
+    // calls update({ status: 'inactive' })), but setting it blank is not.
+    assertNotEmptyIfPresent(data.name, 'Section name');
     const language = resolveLanguage(options?.language, this.defaultLanguage);
 
     const section = await this.httpClient.request<ApiSectionDTO>({

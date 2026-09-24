@@ -2,7 +2,7 @@ import { ContentDTO } from '../types.js';
 import { HttpClient } from '../http-client.js';
 import { ElementResolver, TemplateElement, ResolveContext, RepeaterInput } from '../element-resolver.js';
 import { TypeRegistry } from '../type-registry.js';
-import { formatFileSize, parseElementKey, mapStatus, flattenGroups, STATUS_CODES, AUTH_LEVEL_MAP, debugWarn, DEFAULT_CACHE_TTL, getCacheEpoch } from '../utils.js';
+import { formatFileSize, parseElementKey, mapStatus, flattenGroups, STATUS_CODES, AUTH_LEVEL_MAP, debugWarn, DEFAULT_CACHE_TTL, getCacheEpoch, assertRequired } from '../utils.js';
 
 /** Symbol used to restrict _init() access to the factory function in this module */
 const INIT = Symbol('ContentItem.init');
@@ -683,6 +683,8 @@ export class ContentItem {
    * save and approve in one step.
    */
   async save(): Promise<void> {
+    assertRequired(this.name, 'Content name');
+
     // Start from the original raw elements (correct API format)
     const rawElements = { ...this._rawDTO.elements };
 

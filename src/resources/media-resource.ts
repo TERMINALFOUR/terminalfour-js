@@ -1,7 +1,7 @@
 import { HttpClient } from '../http-client.js';
 import { MediaItem, RawMediaDTO, MediaFileInput } from '../models/media-item.js';
 import { LanguageOption } from '../types.js';
-import { resolveLanguage, resolveFileToBlob, deriveFilename, DEFAULT_CACHE_TTL, getCacheEpoch } from '../utils.js';
+import { resolveLanguage, resolveFileToBlob, deriveFilename, DEFAULT_CACHE_TTL, getCacheEpoch, assertRequired } from '../utils.js';
 
 /** Raw media type from GET /mediaType */
 interface RawMediaType {
@@ -79,8 +79,16 @@ export class MediaResource {
     fields?: Record<string, unknown>;
     language?: string;
   }): Promise<MediaItem> {
-    if (!data.name?.trim()) throw new Error('Media name is required');
+    assertRequired(data.name, 'Media name');
     if (!data.category) throw new Error('Media category is required');
+    // A media item is meaningless without its file/binary. Guard the common
+    // empty cases: missing, or an empty { file } wrapper.
+    const fileValue = data.file && typeof data.file === 'object' && !(data.file instanceof Blob) && 'file' in data.file
+      ? (data.file as { file: unknown }).file
+      : data.file;
+    if (fileValue === undefined || fileValue === null || fileValue === '') {
+      throw new Error('Media file is required');
+    }
 
     const language = data.language ?? 'smxx';
     const filename = deriveFilename(data.file);

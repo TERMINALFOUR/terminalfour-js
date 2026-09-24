@@ -228,6 +228,24 @@ describe('MediaResource', () => {
       });
     }
 
+    it('rejects when name is set empty and sends no POST to /media/category/', async () => {
+      const calls: Array<{ method: string; path: string }> = [];
+      (http.request as ReturnType<typeof vi.fn>).mockImplementation(async (opts: { method: string; path: string }) => {
+        calls.push(opts);
+        if (opts.path === '/media/10928/smxx') return rawMediaResponse;
+        if (opts.path === '/mediaType') return mediaTypes;
+        if (opts.path.includes('/media/category/')) return undefined;
+        throw new Error(`Unexpected: ${opts.path}`);
+      });
+
+      const item = await resource.get(10928);
+      item.name = '   ';
+      await expect(item.save()).rejects.toThrow('Media name is required');
+
+      const writeCall = calls.find((c) => c.method === 'POST' && c.path.includes('/media/category/'));
+      expect(writeCall).toBeUndefined();
+    });
+
     it('sends multipart POST to /media/category/{categoryId}/{language}/{mediaId}', async () => {
       setupSaveMocks();
       const item = await resource.get(10928);
@@ -380,6 +398,22 @@ describe('MediaResource', () => {
 
       expect(item.file).toBeNull(); // reset after save
     });
+
+    it('rejects update(id, { name: "" }) and sends no write to /media/category/', async () => {
+      const calls: Array<{ method: string; path: string }> = [];
+      (http.request as ReturnType<typeof vi.fn>).mockImplementation(async (opts: { method: string; path: string }) => {
+        calls.push(opts);
+        if (opts.path === '/media/10928/smxx') return rawMediaResponse;
+        if (opts.path === '/mediaType') return mediaTypes;
+        if (opts.path.includes('/media/category/')) return undefined;
+        throw new Error(`Unexpected: ${opts.method} ${opts.path}`);
+      });
+
+      await expect(resource.update(10928, { name: '' })).rejects.toThrow('Media name is required');
+
+      const writeCall = calls.find((c) => c.path.includes('/media/category/'));
+      expect(writeCall).toBeUndefined();
+    });
   });
 
   describe('create()', () => {
@@ -511,6 +545,60 @@ describe('MediaResource', () => {
         name: 'Test',
         category: 0,
       })).rejects.toThrow('Media category is required');
+    });
+
+    it('rejects empty name with no upload/POST to /media', async () => {
+      const calls: Array<{ method: string; path: string }> = [];
+      (http.request as ReturnType<typeof vi.fn>).mockImplementation(async (opts: { method: string; path: string }) => {
+        calls.push(opts);
+        if (opts.path === '/mediaType') return mediaTypes;
+        throw new Error(`Unexpected: ${opts.method} ${opts.path}`);
+      });
+
+      await expect(resource.create({
+        file: new Blob(['test']),
+        name: '',
+        category: 391,
+      })).rejects.toThrow('Media name is required');
+
+      const upload = calls.find((c) => c.method === 'POST' || c.path === '/upload/');
+      expect(upload).toBeUndefined();
+    });
+
+    it('rejects missing file (undefined) with "Media file is required" and no upload/POST', async () => {
+      const calls: Array<{ method: string; path: string }> = [];
+      (http.request as ReturnType<typeof vi.fn>).mockImplementation(async (opts: { method: string; path: string }) => {
+        calls.push(opts);
+        if (opts.path === '/mediaType') return mediaTypes;
+        throw new Error(`Unexpected: ${opts.method} ${opts.path}`);
+      });
+
+      await expect(resource.create({
+        file: undefined as unknown as Blob,
+        name: 'Valid Name',
+        category: 391,
+      })).rejects.toThrow('Media file is required');
+
+      const upload = calls.find((c) => c.method === 'POST' || c.path === '/upload/');
+      expect(upload).toBeUndefined();
+    });
+
+    it('rejects empty { file } wrapper with "Media file is required" and no upload/POST', async () => {
+      const calls: Array<{ method: string; path: string }> = [];
+      (http.request as ReturnType<typeof vi.fn>).mockImplementation(async (opts: { method: string; path: string }) => {
+        calls.push(opts);
+        if (opts.path === '/mediaType') return mediaTypes;
+        throw new Error(`Unexpected: ${opts.method} ${opts.path}`);
+      });
+
+      await expect(resource.create({
+        file: { file: '' as unknown as Blob, filename: 'x.jpg' },
+        name: 'Valid Name',
+        category: 391,
+      })).rejects.toThrow('Media file is required');
+
+      const upload = calls.find((c) => c.method === 'POST' || c.path === '/upload/');
+      expect(upload).toBeUndefined();
     });
 
     it('sends categories and language in form data', async () => {

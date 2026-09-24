@@ -61,6 +61,32 @@ The final error can result from a call such as:
 await t4.users.create({ username: '', ... });
 ```
 
+### Required fields
+
+Creating an asset without its required `name` (or other required input) throws before any request is sent, so you get a clear message instead of an opaque API error:
+
+```text
+Error: Section name is required
+Error: Content name is required
+Error: Layout name is required
+Error: Media name is required
+Error: Media file is required
+```
+
+The same protection applies on update: you cannot blank out a name that is already set. Omitting `name` leaves it unchanged, but setting it to an empty or whitespace-only string is rejected — through both the resource `update()` method and the mutable `get()` → modify → `save()` pattern:
+
+```typescript
+const section = await t4.section(482).get();
+section.name = '';
+await section.save();
+// Error: Section name is required
+
+await t4.section(482).update({ name: '   ' });
+// Error: Section name cannot be empty
+```
+
+This covers content types, content items, sections, lists, groups, page layouts, media, media types, media categories, navigation objects, and Handlebars helpers/partials.
+
 ## Enable debug logging
 
 Set `T4_DEBUG=1` to print HTTP requests and internal warnings:
