@@ -1,0 +1,41 @@
+name: Feature request
+description: Suggest a new capability or improvement for the SDK.
+title: "[Feature]: "
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for suggesting an improvement. Describing the underlying problem (not just a proposed API) helps us find the best solution.
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem / use case
+      description: What are you trying to do, and what makes it hard or impossible today?
+      placeholder: I'm building X and need to ...
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      description: How you'd like it to work. A sketch of the API or usage is helpful. This field is rendered as TypeScript, so no code fences are needed.
+      placeholder: |
+        await t4.section(123).content.someNewMethod(...);
+      render: typescript
+    validations:
+      required: false
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Any workarounds you're using now, or other approaches you've thought about.
+    validations:
+      required: false
+  - type: textarea
+    id: context
+    attributes:
+      label: Additional context
+      description: Anything else that would help us understand the request.
+    validations:
+      required: false

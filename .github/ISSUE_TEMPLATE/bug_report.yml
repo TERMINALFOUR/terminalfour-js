@@ -1,0 +1,77 @@
+name: Bug report
+description: Report something in the SDK that isn't working as expected.
+title: "[Bug]: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to file a bug. Please fill in the sections below so we can reproduce and fix it quickly.
+  - type: textarea
+    id: description
+    attributes:
+      label: What happened?
+      description: A clear description of the bug, including any error messages or stack traces.
+      placeholder: When I call t4.section(123).content.get(456), ...
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Steps to reproduce
+      description: A minimal code snippet or sequence of steps that triggers the bug. This field is rendered as TypeScript, so no code fences are needed.
+      placeholder: |
+        const t4 = new T4Client({ baseUrl: '...', apiToken: '...' });
+        // ...
+      render: typescript
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behaviour
+      description: What you expected to happen instead.
+    validations:
+      required: true
+  - type: input
+    id: sdk-version
+    attributes:
+      label: SDK version
+      description: The version of `@terminalfour/terminalfour-js` you're using.
+      placeholder: 1.1.1
+    validations:
+      required: true
+  - type: input
+    id: node-version
+    attributes:
+      label: Node.js version
+      description: Output of `node --version`.
+      placeholder: v20.11.0
+    validations:
+      required: true
+  - type: input
+    id: t4-version
+    attributes:
+      label: Terminalfour version
+      description: The T4 instance version the SDK is talking to, if known (see `t4.version()`).
+      placeholder: 8.4.2-FINAL
+    validations:
+      required: false
+  - type: dropdown
+    id: regression
+    attributes:
+      label: Did this work in a previous version?
+      description: Helps us identify regressions.
+      options:
+        - "Not sure"
+        - "Yes — it worked in an earlier SDK version"
+        - "No — it has never worked"
+    validations:
+      required: false
+  - type: textarea
+    id: context
+    attributes:
+      label: Additional context
+      description: Anything else that might help — logs (with secrets redacted), environment details, related issues.
+    validations:
+      required: false
