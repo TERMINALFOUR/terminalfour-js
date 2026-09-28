@@ -1,0 +1,36 @@
+name: Documentation issue
+description: Report something wrong, unclear, or missing in the documentation.
+title: "[Docs]: "
+labels: ["documentation"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for helping improve the docs. Point us at the page and tell us what's off.
+  - type: input
+    id: location
+    attributes:
+      label: Which doc or page?
+      description: A file path (e.g. `docs/content.md`), a section heading, or a URL.
+      placeholder: docs/getting-started.md — "Refresh cached data"
+    validations:
+      required: true
+  - type: dropdown
+    id: kind
+    attributes:
+      label: What kind of issue?
+      options:
+        - "Incorrect / out of date"
+        - "Unclear or confusing"
+        - "Missing information"
+        - "Broken example / code doesn't run"
+        - "Typo or formatting"
+    validations:
+      required: true
+  - type: textarea
+    id: details
+    attributes:
+      label: What's wrong, and what would be better?
+      description: Describe the problem and, if you can, suggest the fix or the missing detail.
+    validations:
+      required: true
