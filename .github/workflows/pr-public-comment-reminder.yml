@@ -1,0 +1,55 @@
+name: PR public comment reminder
+
+# Posts a reminder on every pull request that this repository is public, so
+# reviewers don't paste internal links, customer names, or credentials into
+# comments and reviews (which are public and effectively permanent).
+#
+# The reminder is posted once and reused: on reopen it updates the existing
+# comment rather than adding a duplicate, keeping the PR timeline clean.
+
+on:
+  pull_request_target:
+    types: [opened, reopened]
+
+permissions:
+  pull-requests: write   # post/update the reminder comment
+
+jobs:
+  remind:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/github-script@v7
+        with:
+          script: |
+            const marker = '<!-- public-comment-reminder -->';
+            const body = [
+              marker,
+              '> [!WARNING]',
+              '> **This repository is public.** Pull request comments, reviews, and this description are visible to anyone and are effectively permanent (they also go out in email notifications).',
+              '>',
+              '> Please do **not** include:',
+              '> - Internal links (wikis, tickets, dashboards)',
+              '> - Customer names or other confidential details',
+              '> - Credentials, tokens, or API keys',
+              '>',
+              'Keep that discussion in an internal channel and reference it here only in a way that is safe to make public.',
+            ].join('\n');
+
+            const { owner, repo } = context.repo;
+            const issue_number = context.payload.pull_request.number;
+
+            // Reuse an existing reminder if one is already on the PR.
+            const comments = await github.paginate(github.rest.issues.listComments, {
+              owner, repo, issue_number, per_page: 100,
+            });
+            const existing = comments.find((c) => c.body && c.body.includes(marker));
+
+            if (existing) {
+              await github.rest.issues.updateComment({
+                owner, repo, comment_id: existing.id, body,
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner, repo, issue_number, body,
+              });
+            }
