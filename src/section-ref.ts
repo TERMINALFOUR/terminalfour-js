@@ -518,6 +518,40 @@ export class SectionRef {
     return SubsectionList.create(items, this.httpClient, this.sectionId, language);
   }
 
+  /**
+   * Returns references to the sections that mirror this one.
+   *
+   * Only valid when this section is the source of one or more mirrors
+   * (`sourceOfMirror` is `true`). Throws a clear error otherwise. A single
+   * section can be mirrored to multiple places, so this returns an array.
+   */
+  async mirrors(options?: LanguageOption): Promise<SectionRef[]> {
+    const language = resolveLanguage(options?.language, this.defaultLanguage);
+
+    // Fetch this section first to confirm it is actually a mirror source, so a
+    // non-source section fails fast and clearly rather than hitting the mirrors
+    // endpoint.
+    const section = await this.httpClient.request<ApiSectionDTO>({
+      method: 'GET',
+      path: `/hierarchy/${this.sectionId}/${language}`,
+    });
+
+    if (section.sourceOfMirror !== true) {
+      throw new Error(
+        `Section ${this.sectionId} is not the source of any mirror (sourceOfMirror is false).`,
+      );
+    }
+
+    const mirrors = await this.httpClient.request<ApiSectionDTO[]>({
+      method: 'GET',
+      path: `/hierarchy/${this.sectionId}/mirrors/${language}`,
+    });
+
+    return (mirrors ?? []).map(
+      (m) => new SectionRef(this.httpClient, m.id, this.defaultLanguage, this.mediaCreateFn, this.cache),
+    );
+  }
+
   /** Returns users and groups with edit rights on this section, including inherited rights. */
   async editRights(options?: LanguageOption): Promise<{
     users: Array<{ id: number; username: string; firstName: string; lastName: string; emailAddress: string; inherited: boolean }>;
