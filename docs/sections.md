@@ -164,6 +164,8 @@ If the array omits a child that is present, includes an unknown ID, or repeats o
 
 > Reordering applies to sections ordered manually. It does not override a parent configured to sort its children automatically.
 
+> A mirrored section is read-only, so reordering its children (`setOrder()`/`reorder()`) throws when the parent section is a mirror.
+
 ### Full tree or subtree
 
 ```typescript
