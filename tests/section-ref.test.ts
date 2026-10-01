@@ -1435,6 +1435,79 @@ describe('SectionRef', () => {
     });
   });
 
+  describe('mirror()', () => {
+    const mirroringEnabled = { name: 'hierarchy.enableMirroringOfSections', type: 'boolean', value: 'true' };
+    const mirroringDisabled = { name: 'hierarchy.enableMirroringOfSections', type: 'boolean', value: 'false' };
+
+    function mockConfig(http: HttpClient, config: unknown) {
+      (http.request as ReturnType<typeof vi.fn>).mockImplementation(
+        async (opts: { method: string; path: string }) => {
+          if (opts.method === 'GET' && opts.path === '/config/hierarchy.enableMirroringOfSections') {
+            return config;
+          }
+          if (opts.method === 'LINK') return undefined;
+          throw new Error(`Unexpected request: ${opts.method} ${opts.path}`);
+        },
+      );
+    }
+
+    function linkCall(http: HttpClient) {
+      return (http.request as ReturnType<typeof vi.fn>).mock.calls
+        .map((c: unknown[]) => c[0] as { method: string; path: string; body?: Record<string, unknown> })
+        .find((o) => o.method === 'LINK');
+    }
+
+    it('sends LINK /hierarchy/{sectionId} with destination and default content IGNORE', async () => {
+      mockConfig(http, mirroringEnabled);
+
+      await ref.mirror(8331);
+
+      const call = linkCall(http);
+      expect(call!.path).toBe('/hierarchy/233');
+      expect(call!.body).toEqual({ destination: 8331, content: 'IGNORE' });
+    });
+
+    it('maps accessControl: duplicate → content DUPLICATE', async () => {
+      mockConfig(http, mirroringEnabled);
+      await ref.mirror(8331, { accessControl: 'duplicate' });
+      expect(linkCall(http)!.body).toEqual({ destination: 8331, content: 'DUPLICATE' });
+    });
+
+    it('maps accessControl: mirror → content MIRROR', async () => {
+      mockConfig(http, mirroringEnabled);
+      await ref.mirror(8331, { accessControl: 'mirror' });
+      expect(linkCall(http)!.body).toEqual({ destination: 8331, content: 'MIRROR' });
+    });
+
+    it('includes retainLinkTargets: true only when set', async () => {
+      mockConfig(http, mirroringEnabled);
+      await ref.mirror(8331, { accessControl: 'duplicate', retainLinkTargets: true });
+      expect(linkCall(http)!.body).toEqual({
+        destination: 8331,
+        content: 'DUPLICATE',
+        retainLinkTargets: true,
+      });
+    });
+
+    it('omits retainLinkTargets when false', async () => {
+      mockConfig(http, mirroringEnabled);
+      await ref.mirror(8331, { retainLinkTargets: false });
+      expect(linkCall(http)!.body).not.toHaveProperty('retainLinkTargets');
+    });
+
+    it('throws (and does not call LINK) when mirroring is disabled', async () => {
+      mockConfig(http, mirroringDisabled);
+      await expect(ref.mirror(8331)).rejects.toThrow(/mirroring is not enabled/);
+      expect(linkCall(http)).toBeUndefined();
+    });
+
+    it('throws on an invalid destination without any API call', async () => {
+      await expect(ref.mirror(0)).rejects.toThrow(/positive section ID/);
+      await expect(ref.mirror(-5)).rejects.toThrow(/positive section ID/);
+      expect((http.request as ReturnType<typeof vi.fn>).mock.calls).toHaveLength(0);
+    });
+  });
+
   describe('content.list() works via content property', () => {
     it('content.list() works', async () => {
       const contentDTO = {

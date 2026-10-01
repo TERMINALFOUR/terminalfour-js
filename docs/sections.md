@@ -5,7 +5,7 @@
 ## Contents
 
 - [Read and update a section](#read-and-update-a-section)
-- [Create, delete, purge, or move](#create-delete-purge-or-move)
+- [Create, delete, purge, move, or mirror](#create-delete-purge-move-or-mirror)
 - [Navigate the section tree](#navigate-the-section-tree)
 - [Manage section configuration](#manage-section-configuration)
 - [Publish](#publish)
@@ -32,6 +32,8 @@ const section = await t4.section(233).get();
 | `pathMembers` | `number[]` | no | Section IDs in the path |
 | `lastModified` | `Date \| null` | no | Last modification date |
 | `accessControl` | `{ active, enabled }` | no | Access control state |
+| `mirrorOf` | `number \| null` | no | Source section ID when this section is a mirror; `null` otherwise |
+| `mirrorOfPath` | `string \| null` | no | Breadcrumb of the mirror source; `null` when not a mirror |
 | `customFields` | `Record<string, unknown> \| null` | yes | Resolved metadata content fields, or `null` |
 
 ### Direct update
@@ -64,7 +66,7 @@ await section.save();
 
 The SDK will throw when no metadata content type is configured on the instance and you attempt add customFields.
 
-## Create, delete, purge, or move
+## Create, delete, purge, move, or mirror
 
 ### Create a child section
 
@@ -88,6 +90,27 @@ await t4.section(500).delete();   // soft delete: sets status to inactive
 await t4.section(500).purge();    // permanent removal; section must be inactive first
 await t4.section(500).move(233);  // move under section 233
 ```
+
+### Mirror a branch
+
+Mirror this section's entire branch under a destination parent. A mirror is a read-only reflection of the source — the mirrored sections and their content stay in sync with the source.
+
+```typescript
+await t4.section(8817).mirror(8331); // mirror section 8817's branch under section 8331
+```
+
+The second argument configures how access control is handled and whether link targets are retained:
+
+```typescript
+await t4.section(8817).mirror(8331, {
+  accessControl: 'duplicate',   // 'ignore' (default), 'duplicate', or 'mirror'
+  retainLinkTargets: true,       // keep section/content link targets; default false
+});
+```
+
+Mirroring must be enabled on the T4 instance. The SDK checks this first and throws a clear error if it is disabled, before attempting the operation. Mirroring always applies to the whole branch below the source section.
+
+> Mirrored sections and their content are read-only in T4. Editing them through the SDK is not yet guarded — avoid writing to a section that is a mirror (see [Read and update a section](#read-and-update-a-section) for how to detect one via `mirrorOf`).
 
 ## Navigate the section tree
 
