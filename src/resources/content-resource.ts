@@ -5,7 +5,7 @@ import {
   UpdateContentData,
   ContentDTO,
 } from '../types.js';
-import { resolveLanguage, toTimestamp, STATUS_CODES, assertRequired, assertNotEmptyIfPresent } from '../utils.js';
+import { resolveLanguage, toTimestamp, STATUS_CODES, assertRequired, assertNotEmptyIfPresent, assertSectionNotMirroredCached } from '../utils.js';
 import { ContentItem, createContentItem } from '../models/content-item.js';
 import { ContentList } from '../models/content-list.js';
 import { ElementResolver, TemplateElement, ResolveContext, MediaCreateFn } from '../element-resolver.js';
@@ -188,6 +188,7 @@ export class ContentResource {
   async create(data: CreateContentData, options?: LanguageOption): Promise<ContentItem> {
     assertRequired(data.name, 'Content name');
     const language = resolveLanguage(options?.language, this.defaultLanguage);
+    await assertSectionNotMirroredCached(this.httpClient, this.sectionId, language);
 
     const template = await this.getTemplate(data.type);
     const contentId = -Math.floor(Math.random() * 1000000);
@@ -238,6 +239,7 @@ export class ContentResource {
   async update(id: number, data: UpdateContentData, options?: LanguageOption): Promise<ContentItem> {
     assertNotEmptyIfPresent(data.name, 'Content name');
     const language = resolveLanguage(options?.language, this.defaultLanguage);
+    await assertSectionNotMirroredCached(this.httpClient, this.sectionId, language);
 
     // 1. Fetch the existing content (full body needed for the POST)
     const existing = await this.httpClient.request<ContentDTO>({
@@ -313,6 +315,7 @@ export class ContentResource {
   /** Deletes a content item by ID. */
   async delete(id: number, options?: LanguageOption): Promise<void> {
     const language = resolveLanguage(options?.language, this.defaultLanguage);
+    await assertSectionNotMirroredCached(this.httpClient, this.sectionId, language);
     await this.httpClient.request<void>({
       method: 'DELETE',
       path: `/content/${this.sectionId}/${id}/${language}`,
@@ -322,6 +325,7 @@ export class ContentResource {
   /** Permanently removes a content item. */
   async purge(id: number, options?: LanguageOption): Promise<void> {
     const language = resolveLanguage(options?.language, this.defaultLanguage);
+    await assertSectionNotMirroredCached(this.httpClient, this.sectionId, language);
     await this.httpClient.request<void>({
       method: 'POST',
       path: '/content/purge',
@@ -340,6 +344,7 @@ export class ContentResource {
    */
   async approveAll(options?: LanguageOption): Promise<number> {
     const language = resolveLanguage(options?.language, this.defaultLanguage);
+    await assertSectionNotMirroredCached(this.httpClient, this.sectionId, language);
     const response = await this.httpClient.request<ContentsResponse>({
       method: 'GET',
       path: `/hierarchy/${this.sectionId}/${language}/contents?showAll=false&removeNonTranslated=false`,
