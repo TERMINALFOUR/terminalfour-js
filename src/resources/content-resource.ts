@@ -7,6 +7,7 @@ import {
 } from '../types.js';
 import { resolveLanguage, toTimestamp, STATUS_CODES, assertRequired, assertNotEmptyIfPresent } from '../utils.js';
 import { ContentItem, createContentItem } from '../models/content-item.js';
+import { ContentList } from '../models/content-list.js';
 import { ElementResolver, TemplateElement, ResolveContext, MediaCreateFn } from '../element-resolver.js';
 import { TypeRegistry } from '../type-registry.js';
 import { ContentCache } from '../content-cache.js';
@@ -148,18 +149,25 @@ export class ContentResource {
     return this.resolver.buildElements(fields, elements, name, language, this.sectionId, context);
   }
 
-  /** Lists all content items in this section. */
-  async list(options?: LanguageOption): Promise<ContentItem[]> {
+  /**
+   * Lists all content items in this section.
+   *
+   * Returns a {@link ContentList} — an array of {@link ContentItem}s that also
+   * exposes `setOrder()` and `reorder()` for changing the display order of
+   * content within the section.
+   */
+  async list(options?: LanguageOption): Promise<ContentList> {
     const language = resolveLanguage(options?.language, this.defaultLanguage);
     const response = await this.httpClient.request<ContentsResponse>({
       method: 'GET',
       path: `/hierarchy/${this.sectionId}/${language}/contents?showAll=false&removeNonTranslated=false`,
     });
-    return Promise.all(
+    const items = await Promise.all(
       (response.children ?? []).map((child) =>
         createContentItem(child.content, this.httpClient, this.sectionId),
       ),
     );
+    return ContentList.create(items, this.httpClient, this.sectionId, language);
   }
 
   /** Retrieves a single content item by ID. */
