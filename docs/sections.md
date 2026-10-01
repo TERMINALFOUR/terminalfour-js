@@ -193,6 +193,26 @@ If the array omits a child that is present, includes an unknown ID, or repeats o
 
 > A mirrored section is read-only, so reordering its children (`setOrder()`/`reorder()`) throws when the parent section is a mirror.
 
+### Find mirror sections
+
+When a section is the source of one or more mirrors, `mirrors()` returns a `SectionRef` for each section that mirrors it:
+
+```typescript
+const mirrors = await t4.section(1413).mirrors();
+for (const ref of mirrors) {
+  const section = await ref.get();
+  console.log(section.id, section.path);
+}
+```
+
+A section can be mirrored to several places, so this is always an array. If the section is not a mirror source, `mirrors()` throws:
+
+```
+Section 1413 is not the source of any mirror (sourceOfMirror is false).
+```
+
+(Detect a source without calling `mirrors()` by reading `sourceOfMirror` — not currently surfaced on `SectionItem`; `mirrors()` checks it internally.)
+
 ### Full tree or subtree
 
 ```typescript
