@@ -164,6 +164,8 @@ If the array omits an ID that is in the section, includes an ID that is not, or 
 
 > Reordering applies to content ordered manually. It does not override a section configured to sort its content automatically (for example alphabetically or by date).
 
+> Content in a mirrored section is read-only, so `setOrder()` and `reorder()` throw when the section is a mirror.
+
 ## Approve, duplicate, move, or remove
 
 ### Approve one item
