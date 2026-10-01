@@ -35,6 +35,37 @@ describe('SectionItem', () => {
     expect(new SectionItem({ ...rawSection, status: 2 }, http, 'en').status).toBe('inactive');
   });
 
+  it('mirrorOf and mirrorOfPath are null for a non-mirror section', () => {
+    const http = mockHttpClient();
+    const item = new SectionItem(rawSection, http, 'en');
+    expect(item.mirrorOf).toBeNull();
+    expect(item.mirrorOfPath).toBeNull();
+  });
+
+  it('exposes mirrorOf and decoded mirrorOfPath for a mirror section', () => {
+    const http = mockHttpClient();
+    const item = new SectionItem(
+      {
+        ...rawSection,
+        id: 8820,
+        mirrorOf: 8817,
+        sourceOfMirror: false,
+        mirrorOfPath: 'Home &raquo; samplesite.terminalfour.com &raquo; Doc Example',
+      },
+      http,
+      'en',
+    );
+    expect(item.mirrorOf).toBe(8817);
+    expect(item.mirrorOfPath).toBe('Home \u00BB samplesite.terminalfour.com \u00BB Doc Example');
+  });
+
+  it('treats mirrorOf of 0 as not a mirror', () => {
+    const http = mockHttpClient();
+    const item = new SectionItem({ ...rawSection, mirrorOf: 0, mirrorOfPath: '' }, http, 'en');
+    expect(item.mirrorOf).toBeNull();
+    expect(item.mirrorOfPath).toBeNull();
+  });
+
   it('allows mutable name', () => {
     const http = mockHttpClient();
     const item = new SectionItem(rawSection, http, 'en');
