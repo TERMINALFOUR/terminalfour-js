@@ -1614,6 +1614,83 @@ describe('SectionRef', () => {
     });
   });
 
+  describe('mirrors()', () => {
+    const mirrorDtos = [
+      { id: 1888, parent: 1408, name: 'Program Outline', mirrorOf: 233, sourceOfMirror: false },
+      { id: 1999, parent: 1500, name: 'Program Outline', mirrorOf: 233, sourceOfMirror: false },
+    ];
+
+    it('returns SectionRefs for the mirror sections when sourceOfMirror is true', async () => {
+      (http.request as ReturnType<typeof vi.fn>).mockImplementation(
+        async (o: { method: string; path: string }) => {
+          if (o.method === 'GET' && o.path === '/hierarchy/233/en') {
+            return { id: 233, name: 'Source', parent: 1, sourceOfMirror: true };
+          }
+          if (o.method === 'GET' && o.path === '/hierarchy/233/mirrors/en') return mirrorDtos;
+          throw new Error(`Unexpected: ${o.method} ${o.path}`);
+        },
+      );
+
+      const result = await ref.mirrors();
+
+      expect(result).toHaveLength(2);
+      expect(result.every((r) => r instanceof SectionRef)).toBe(true);
+      // SectionRef exposes its target via content operations path; verify by id through a get()
+      const mirrorsCall = (http.request as ReturnType<typeof vi.fn>).mock.calls
+        .map((c: unknown[]) => c[0] as { method: string; path: string })
+        .find((o) => o.path === '/hierarchy/233/mirrors/en');
+      expect(mirrorsCall).toBeDefined();
+    });
+
+    it('returns refs that target the mirror section ids', async () => {
+      (http.request as ReturnType<typeof vi.fn>).mockImplementation(
+        async (o: { method: string; path: string }) => {
+          if (o.method === 'GET' && o.path === '/hierarchy/233/en') {
+            return { id: 233, name: 'Source', parent: 1, sourceOfMirror: true };
+          }
+          if (o.method === 'GET' && o.path === '/hierarchy/233/mirrors/en') return mirrorDtos;
+          if (o.method === 'GET' && o.path === '/hierarchy/1888/en') return { id: 1888, name: 'Program Outline', parent: 1408 };
+          throw new Error(`Unexpected: ${o.method} ${o.path}`);
+        },
+      );
+
+      const [first] = await ref.mirrors();
+      const item = await first.get();
+      expect(item.id).toBe(1888);
+    });
+
+    it('throws clearly when the section is not a mirror source and does not call the mirrors endpoint', async () => {
+      (http.request as ReturnType<typeof vi.fn>).mockImplementation(
+        async (o: { method: string; path: string }) => {
+          if (o.method === 'GET' && o.path === '/hierarchy/233/en') {
+            return { id: 233, name: 'Source', parent: 1, sourceOfMirror: false };
+          }
+          throw new Error(`Unexpected: ${o.method} ${o.path}`);
+        },
+      );
+
+      await expect(ref.mirrors()).rejects.toThrow(
+        /Section 233 is not the source of any mirror \(sourceOfMirror is false\)/,
+      );
+      const mirrorsCall = (http.request as ReturnType<typeof vi.fn>).mock.calls
+        .map((c: unknown[]) => c[0] as { path: string })
+        .find((o) => o.path.includes('/mirrors/'));
+      expect(mirrorsCall).toBeUndefined();
+    });
+
+    it('treats a missing sourceOfMirror as not a source', async () => {
+      (http.request as ReturnType<typeof vi.fn>).mockImplementation(
+        async (o: { method: string; path: string }) => {
+          if (o.method === 'GET' && o.path === '/hierarchy/233/en') {
+            return { id: 233, name: 'Source', parent: 1 };
+          }
+          throw new Error(`Unexpected: ${o.method} ${o.path}`);
+        },
+      );
+      await expect(ref.mirrors()).rejects.toThrow(/is not the source of any mirror/);
+    });
+  });
+
   describe('content.list() works via content property', () => {
     it('content.list() works', async () => {
       const contentDTO = {
