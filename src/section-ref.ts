@@ -900,6 +900,69 @@ export class SectionRef {
   }
 
   /**
+   * Mirrors this section's entire branch under a destination parent section.
+   *
+   * A mirror is a read-only reflection of the source branch — the mirrored
+   * sections and their content stay in sync with the source and cannot be
+   * edited independently.
+   *
+   * Mirroring must be enabled on the T4 instance; this method checks
+   * `hierarchy.enableMirroringOfSections` first and throws a clear error if it
+   * is disabled, before attempting the operation.
+   *
+   * @param destinationParentId The section the mirror branch is placed under.
+   * @param options.accessControl How access control is handled on the mirror:
+   *   `'ignore'` (default), `'duplicate'`, or `'mirror'`.
+   * @param options.retainLinkTargets Keep section/content link targets pointing
+   *   at the originals rather than the mirrored copies. Defaults to `false`.
+   */
+  async mirror(
+    destinationParentId: number,
+    options?: { accessControl?: 'ignore' | 'duplicate' | 'mirror'; retainLinkTargets?: boolean },
+  ): Promise<void> {
+    if (!Number.isInteger(destinationParentId) || destinationParentId <= 0) {
+      throw new Error(
+        `mirror destination must be a positive section ID, received ${destinationParentId}.`,
+      );
+    }
+
+    // Precondition: mirroring must be enabled on the instance.
+    const enabled = await this.isMirroringEnabled();
+    if (!enabled) {
+      throw new Error(
+        'Section mirroring is not enabled on this T4 instance ' +
+        '(hierarchy.enableMirroringOfSections is not "true"). Enable it in the T4 configuration before mirroring sections.',
+      );
+    }
+
+    const accessControlMap = { ignore: 'IGNORE', duplicate: 'DUPLICATE', mirror: 'MIRROR' } as const;
+    const content = accessControlMap[options?.accessControl ?? 'ignore'];
+
+    const body: { destination: number; content: string; retainLinkTargets?: boolean } = {
+      destination: destinationParentId,
+      content,
+    };
+    if (options?.retainLinkTargets) {
+      body.retainLinkTargets = true;
+    }
+
+    await this.httpClient.request<void>({
+      method: 'LINK',
+      path: `/hierarchy/${this.sectionId}`,
+      body,
+    });
+  }
+
+  /** Returns whether section mirroring is enabled on this T4 instance. */
+  private async isMirroringEnabled(): Promise<boolean> {
+    const config = await this.httpClient.request<{ name: string; type: string; value: string }>({
+      method: 'GET',
+      path: '/config/hierarchy.enableMirroringOfSections',
+    });
+    return config.value === 'true';
+  }
+
+  /**
    * Updates section properties. Fetches the current section, merges your
    * changes, and PUTs the full body back. Only pass the fields you want to change.
    * Returns the updated SectionItem.
