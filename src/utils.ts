@@ -601,3 +601,43 @@ function mirrorError(sectionId: number, mirrorOf: number, scope: 'section' | 'co
     `and is read-only. Edit the source section instead.`,
   );
 }
+
+/**
+ * Parses the plain-text response body returned by the section duplicate
+ * endpoint (`COPY /hierarchy/{id}/{language}`) to extract the new branch's
+ * root section ID.
+ *
+ * ⚠️ FRAGILE — depends on T4's human-readable progress log format, not a
+ * structured field. The endpoint returns newline-delimited text (mislabeled
+ * `application/json`) ending in a `DUPLICATE_BRANCH_SUCCESS` marker, with a
+ * `Duplicated section id: <n>` line. If a future T4 version changes either the
+ * success marker or that line's wording, this parser must be updated. See
+ * API_NUANCES.
+ *
+ * Throws when the success marker is absent (treats a partial/failed body as a
+ * failure) or when the id line can't be found (rather than returning a wrong id).
+ */
+export function parseDuplicatedSectionId(responseBody: unknown): number {
+  const text = typeof responseBody === 'string'
+    ? responseBody
+    : (responseBody == null ? '' : String(responseBody));
+
+  if (!text.includes('DUPLICATE_BRANCH_SUCCESS')) {
+    throw new Error(
+      'Section duplication did not report success. The server response did not contain ' +
+      'the expected completion marker, so the operation may have failed or been interrupted. ' +
+      `Response: ${text.slice(0, 500)}`,
+    );
+  }
+
+  const match = text.match(/Duplicated section id:\s*(\d+)/);
+  if (!match) {
+    throw new Error(
+      'Section duplication reported success but the new section ID could not be determined ' +
+      'from the server response. The duplicate likely exists; locate it under the destination section. ' +
+      `Response: ${text.slice(0, 500)}`,
+    );
+  }
+
+  return parseInt(match[1], 10);
+}
