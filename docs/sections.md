@@ -166,6 +166,8 @@ If the array omits a child that is present, includes an unknown ID, or repeats o
 >
 > The list reflects the children in the requested language. For a parent that mixes languages, reorder one language at a time.
 
+> A mirrored section is read-only, so reordering its children (`setOrder()`/`reorder()`) throws when the parent section is a mirror.
+
 ### Full tree or subtree
 
 ```typescript

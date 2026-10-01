@@ -174,6 +174,8 @@ If the array omits an ID that is in the section, includes an ID that is not, or 
 
 > **Auto-sorted sections and pinned items.** A section can sort its content automatically (alphabetically, by date). You can still "pin" a few items to the top or bottom and order those manually. The SDK lets you reorder pinned items and content in manually-sorted sections. If you try to move an item the section won't allow (a non-pinned item in an auto-sorted section, or a pinned item outside its block), Terminalfour rejects it and the SDK throws a clear error explaining why.
 
+> Content in a mirrored section is read-only, so `setOrder()` and `reorder()` throw when the section is a mirror.
+
 ## Approve, duplicate, move, or remove
 
 ### Approve one item
