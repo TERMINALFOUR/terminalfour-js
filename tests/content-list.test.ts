@@ -221,7 +221,7 @@ describe('ContentList', () => {
       const list = await resource.list();
       await expect(
         list.setOrder([11922, 11923, 11924, 77777]),
-      ).rejects.toThrow(/not in this section: 77777/);
+      ).rejects.toThrow(/not in section 8461: 77777/);
     });
 
     it('throws when a duplicate ID is included', async () => {

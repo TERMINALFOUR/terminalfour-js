@@ -9,6 +9,7 @@ import {
 import { resolveLanguage, mapStatus, flattenGroups, STATUS_CODES, AUTH_LEVEL_MAP, debugWarn, DEFAULT_CACHE_TTL, getCacheEpoch, assertRequired, assertNotEmptyIfPresent } from './utils.js';
 import { ContentResource } from './resources/content-resource.js';
 import { SectionItem } from './models/section-item.js';
+import { SubsectionList } from './models/subsection-list.js';
 import { MediaCreateFn } from './element-resolver.js';
 import { ContentCache } from './content-cache.js';
 
@@ -494,18 +495,25 @@ export class SectionRef {
     return result;
   }
 
-  /** Lists direct child sections (one level below). */
-  async subsections(options?: LanguageOption): Promise<Array<{ id: number; name: string; lastModified: Date | null }>> {
+  /**
+   * Lists direct child sections (one level below).
+   *
+   * Returns a {@link SubsectionList} — an array of `{ id, name, lastModified }`
+   * summaries that also exposes `setOrder()` and `reorder()` for changing the
+   * display order of subsections under this section.
+   */
+  async subsections(options?: LanguageOption): Promise<SubsectionList> {
     const language = resolveLanguage(options?.language, this.defaultLanguage);
     const response = await this.httpClient.request<{ children: Array<{ id: number; name: string; lastModified: number }> }>({
       method: 'GET',
       path: `/hierarchy/${this.sectionId}/${language}/subsections?showAll=false&removeNonTranslated=false`,
     });
-    return (response.children ?? []).map((child) => ({
+    const items = (response.children ?? []).map((child) => ({
       id: child.id,
       name: child.name,
       lastModified: child.lastModified ? new Date(child.lastModified) : null,
     }));
+    return SubsectionList.create(items, this.httpClient, this.sectionId, language);
   }
 
   /** Returns users and groups with edit rights on this section, including inherited rights. */
