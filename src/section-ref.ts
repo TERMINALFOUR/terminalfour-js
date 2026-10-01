@@ -6,7 +6,7 @@ import {
   AddSectionData,
   ApiSectionDTO,
 } from './types.js';
-import { resolveLanguage, mapStatus, flattenGroups, STATUS_CODES, AUTH_LEVEL_MAP, debugWarn, DEFAULT_CACHE_TTL, getCacheEpoch, assertRequired, assertNotEmptyIfPresent, assertSectionNotMirrored, cacheSectionMirrorStatus } from './utils.js';
+import { resolveLanguage, mapStatus, flattenGroups, STATUS_CODES, AUTH_LEVEL_MAP, debugWarn, DEFAULT_CACHE_TTL, getCacheEpoch, assertRequired, assertNotEmptyIfPresent, assertSectionNotMirrored, cacheSectionMirrorStatus, parseDuplicatedSectionId } from './utils.js';
 import { ContentResource } from './resources/content-resource.js';
 import { SectionItem } from './models/section-item.js';
 import { SubsectionList } from './models/subsection-list.js';
@@ -974,6 +974,93 @@ export class SectionRef {
       path: '/config/hierarchy.enableMirroringOfSections',
     });
     return config.value === 'true';
+  }
+
+  /**
+   * Duplicates this section's entire branch under a destination parent section,
+   * returning the new branch's root as a {@link SectionItem}.
+   *
+   * This can take a long time for large branches — especially when content is
+   * included (`content: 'duplicate'`) — because the server performs the whole
+   * copy before responding. The call resolves once duplication completes.
+   *
+   * A mirrored section cannot be duplicated; this throws if the source section
+   * is a mirror.
+   *
+   * @param destinationParentId The section the duplicated branch is placed under.
+   * @param options.content How content is handled: `'ignore'` (default, structure
+   *   only), `'duplicate'` (copy content), or `'mirror'` (mirror content).
+   * @param options.copyPageLayouts Copy page layout usage. Defaults to `true`.
+   * @param options.copyUserAccess Copy user access rights. Defaults to `true`.
+   * @param options.copyContentTypeAccess Copy content type access rights. Defaults to `true`.
+   * @param options.retainLinkTargets Keep section/content link targets pointing at
+   *   the originals rather than the duplicated copies. Defaults to `false`.
+   */
+  async duplicate(
+    destinationParentId: number,
+    options?: {
+      content?: 'ignore' | 'duplicate' | 'mirror';
+      copyPageLayouts?: boolean;
+      copyUserAccess?: boolean;
+      copyContentTypeAccess?: boolean;
+      retainLinkTargets?: boolean;
+    },
+    opts?: LanguageOption,
+  ): Promise<SectionItem> {
+    if (!Number.isInteger(destinationParentId) || destinationParentId <= 0) {
+      throw new Error(
+        `duplicate destination must be a positive section ID, received ${destinationParentId}.`,
+      );
+    }
+
+    const language = resolveLanguage(opts?.language, this.defaultLanguage);
+
+    // A mirrored section cannot be duplicated. Fetch the source DTO (also used
+    // by the guard, which caches the status for any later content-path checks).
+    const source = await this.httpClient.request<ApiSectionDTO>({
+      method: 'GET',
+      path: `/hierarchy/${this.sectionId}/${language}`,
+    });
+    assertSectionNotMirrored(this.httpClient, this.sectionId, source);
+
+    const contentMap = { ignore: 'IGNORE', duplicate: 'DUPLICATE', mirror: 'MIRROR' } as const;
+    const body: {
+      destination: number;
+      content: string;
+      pageLayouts: boolean;
+      users: boolean;
+      contentTypes: boolean;
+      retainLinkTargets?: boolean;
+    } = {
+      destination: destinationParentId,
+      content: contentMap[options?.content ?? 'ignore'],
+      pageLayouts: options?.copyPageLayouts ?? true,
+      users: options?.copyUserAccess ?? true,
+      contentTypes: options?.copyContentTypeAccess ?? true,
+    };
+    if (options?.retainLinkTargets) {
+      body.retainLinkTargets = true;
+    }
+
+    // The response is a buffered plain-text progress log (not JSON despite its
+    // content-type) ending in a DUPLICATE_BRANCH_SUCCESS marker, with the new
+    // section ID on a "Duplicated section id: <n>" line. HttpClient returns it
+    // as a string when JSON parsing fails.
+    const responseBody = await this.httpClient.request<string>({
+      method: 'COPY',
+      path: `/hierarchy/${this.sectionId}/${language}`,
+      body,
+    });
+
+    const newSectionId = parseDuplicatedSectionId(responseBody);
+
+    // Fetch the new branch root. This also validates the parsed id — a bad parse
+    // would 404 here rather than returning a bogus SectionItem.
+    const newRaw = await this.httpClient.request<ApiSectionDTO>({
+      method: 'GET',
+      path: `/hierarchy/${newSectionId}/${language}`,
+    });
+    return new SectionItem(newRaw, this.httpClient, language, null, this.mediaCreateFn);
   }
 
   /**

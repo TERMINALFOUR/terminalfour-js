@@ -1508,6 +1508,112 @@ describe('SectionRef', () => {
     });
   });
 
+  describe('duplicate()', () => {
+    const SUCCESS_BODY = [
+      'Home>>samplesite.terminalfour.com>>Home>>Doc Example',
+      'Duplicated section id: 795',
+      'Updating Server Side Links...',
+      'Server Side Links updated successfully',
+      'DUPLICATE_BRANCH_SUCCESS',
+    ].join('\n');
+
+    const sourceSection = { id: 233, name: 'Source', parent: 1, status: 0 };
+    const newSection = { id: 795, name: 'Source', parent: 794, status: 0 };
+
+    function mockDuplicate(http: HttpClient, opts?: { source?: unknown; body?: string }) {
+      (http.request as ReturnType<typeof vi.fn>).mockImplementation(
+        async (o: { method: string; path: string }) => {
+          if (o.method === 'GET' && o.path === '/hierarchy/233/en') return opts?.source ?? sourceSection;
+          if (o.method === 'COPY' && o.path === '/hierarchy/233/en') return opts?.body ?? SUCCESS_BODY;
+          if (o.method === 'GET' && o.path === '/hierarchy/795/en') return newSection;
+          throw new Error(`Unexpected: ${o.method} ${o.path}`);
+        },
+      );
+    }
+
+    function copyCall(http: HttpClient) {
+      return (http.request as ReturnType<typeof vi.fn>).mock.calls
+        .map((c: unknown[]) => c[0] as { method: string; path: string; body?: Record<string, unknown> })
+        .find((o) => o.method === 'COPY');
+    }
+
+    it('sends COPY /hierarchy/{id}/{language} with defaults and returns the new SectionItem', async () => {
+      mockDuplicate(http);
+
+      const result = await ref.duplicate(794);
+
+      const call = copyCall(http);
+      expect(call!.path).toBe('/hierarchy/233/en');
+      expect(call!.body).toEqual({
+        destination: 794,
+        content: 'IGNORE',
+        pageLayouts: true,
+        users: true,
+        contentTypes: true,
+      });
+      expect(result).toBeInstanceOf(SectionItem);
+      expect(result.id).toBe(795);
+    });
+
+    it('maps content and the copy flags, and includes retainLinkTargets only when set', async () => {
+      mockDuplicate(http);
+
+      await ref.duplicate(794, {
+        content: 'duplicate',
+        copyPageLayouts: false,
+        copyUserAccess: false,
+        copyContentTypeAccess: false,
+        retainLinkTargets: true,
+      });
+
+      expect(copyCall(http)!.body).toEqual({
+        destination: 794,
+        content: 'DUPLICATE',
+        pageLayouts: false,
+        users: false,
+        contentTypes: false,
+        retainLinkTargets: true,
+      });
+    });
+
+    it('maps content: mirror → MIRROR', async () => {
+      mockDuplicate(http);
+      await ref.duplicate(794, { content: 'mirror' });
+      expect(copyCall(http)!.body).toMatchObject({ content: 'MIRROR' });
+    });
+
+    it('omits retainLinkTargets when not set', async () => {
+      mockDuplicate(http);
+      await ref.duplicate(794);
+      expect(copyCall(http)!.body).not.toHaveProperty('retainLinkTargets');
+    });
+
+    it('blocks duplicating a mirrored source section and makes no COPY', async () => {
+      mockDuplicate(http, { source: { ...sourceSection, mirrorOf: 8817 } });
+      await expect(ref.duplicate(794)).rejects.toThrow(
+        /Cannot modify section 233: it is a mirror of section 8817/,
+      );
+      expect(copyCall(http)).toBeUndefined();
+    });
+
+    it('throws when the response lacks the success marker', async () => {
+      mockDuplicate(http, { body: 'Duplicated section id: 795\nUpdating Server Side Links...' });
+      await expect(ref.duplicate(794)).rejects.toThrow(/did not report success/);
+    });
+
+    it('throws when the new section id cannot be parsed', async () => {
+      mockDuplicate(http, { body: 'Updating Server Side Links...\nDUPLICATE_BRANCH_SUCCESS' });
+      await expect(ref.duplicate(794)).rejects.toThrow(/could not be determined/);
+    });
+
+    it('throws on an invalid destination without any API call', async () => {
+      mockDuplicate(http);
+      await expect(ref.duplicate(0)).rejects.toThrow(/positive section ID/);
+      await expect(ref.duplicate(-2)).rejects.toThrow(/positive section ID/);
+      expect(copyCall(http)).toBeUndefined();
+    });
+  });
+
   describe('content.list() works via content property', () => {
     it('content.list() works', async () => {
       const contentDTO = {
