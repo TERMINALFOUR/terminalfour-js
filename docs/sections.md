@@ -100,6 +100,35 @@ const children = await t4.section(233).subsections();
 // [{ id: 500, name: 'Child', lastModified: Date }]
 ```
 
+`subsections()` returns a `SubsectionList` — an array of child-section summaries that also carries `setOrder()` and `reorder()` (see [Reorder subsections](#reorder-subsections)). It behaves like a normal array everywhere else.
+
+### Reorder subsections
+
+The `SubsectionList` returned by `subsections()` can reorder the direct children of a section. Both methods call the API immediately and keep the list's in-memory order in sync.
+
+Move a single subsection with `reorder(sectionId, options)` — exactly one of `position`, `before`, `after`, or `to`:
+
+```typescript
+const children = await t4.section(233).subsections();
+
+await children.reorder(500, { position: 2 });  // move to the 2nd position (1-based)
+await children.reorder(500, { before: 540 });   // place immediately before another child
+await children.reorder(500, { after: 560 });    // place immediately after another child
+await children.reorder(500, { to: 'first' });   // move to the front
+await children.reorder(500, { to: 'last' });     // move to the end
+```
+
+Replace the whole order with `setOrder(ids)`, passing every child section ID exactly once:
+
+```typescript
+const children = await t4.section(233).subsections();
+await children.setOrder([560, 500, 540]);
+```
+
+If the array omits a child that is present, includes an unknown ID, or repeats one, `setOrder()` throws a descriptive error and makes no changes. T4 has no bulk-order endpoint, so `setOrder()` issues one move request per subsection in sequence.
+
+> Reordering applies to sections ordered manually. It does not override a parent configured to sort its children automatically.
+
 ### Full tree or subtree
 
 ```typescript
