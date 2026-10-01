@@ -124,6 +124,33 @@ Blocked on a mirror: `update`, `addSection`, `setPageLayouts`, `setMetaDatas`, `
 
 Still allowed: `delete()` and `purge()` (how you remove a mirror), `move()`, `publish()`, and all reads. Detect a mirror via `mirrorOf` (see [Read and update a section](#read-and-update-a-section)).
 
+### Duplicate a branch
+
+Duplicate this section's entire branch under a destination parent. Unlike mirroring, this creates independent copies. The call returns the new branch root as a `SectionItem`.
+
+```typescript
+const copy = await t4.section(236).duplicate(794);
+console.log(copy.id); // the new branch's root section ID
+```
+
+The second argument controls what is copied:
+
+```typescript
+await t4.section(236).duplicate(794, {
+  content: 'duplicate',          // 'ignore' (default, structure only), 'duplicate', or 'mirror'
+  copyPageLayouts: true,          // default true
+  copyUserAccess: true,           // default true
+  copyContentTypeAccess: true,    // default true
+  retainLinkTargets: true,        // keep section/content link targets; default false
+});
+```
+
+`content` chooses how content is handled: `'ignore'` copies structure only, `'duplicate'` copies the content, `'mirror'` mirrors it.
+
+> Duplicating a large branch can take some time — especially with `content: 'duplicate'` — because the server completes the whole copy before responding. The promise resolves when duplication finishes.
+
+> A mirrored section cannot be duplicated — `duplicate()` throws if the source section is a mirror.
+
 ## Navigate the section tree
 
 ### Direct children

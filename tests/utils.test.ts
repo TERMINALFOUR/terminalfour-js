@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach, beforeAll } from 'vitest';
-import { resolveLanguage, toTimestamp, decodeHtmlEntities, debugWarn, invalidateAllCaches, parseFileSize, normaliseBaseUrl, assertNotBrowser, readPrimaryGroup, readSharedGroups, writePrimaryGroup, writeSharedGroups, assertGroupsValid, assertRequired, assertNotEmptyIfPresent } from '../src/utils.js';
+import { resolveLanguage, toTimestamp, decodeHtmlEntities, debugWarn, invalidateAllCaches, parseFileSize, normaliseBaseUrl, assertNotBrowser, readPrimaryGroup, readSharedGroups, writePrimaryGroup, writeSharedGroups, assertGroupsValid, assertRequired, assertNotEmptyIfPresent, parseDuplicatedSectionId } from '../src/utils.js';
 
 describe('resolveLanguage', () => {
   it('returns override when provided', () => {
@@ -490,5 +490,39 @@ describe('assertNotEmptyIfPresent', () => {
 
   it('throws for a whitespace-only string', () => {
     expect(() => assertNotEmptyIfPresent('   ', 'Content name')).toThrow('Content name cannot be empty');
+  });
+});
+
+describe('parseDuplicatedSectionId', () => {
+  const successBody = [
+    'Home>>samplesite.terminalfour.com>>Home>>Doc Example',
+    'Duplicated section id: 8822',
+    'Updating Server Side Links...',
+    'Server Side Links updated successfully',
+    'DUPLICATE_BRANCH_SUCCESS',
+  ].join('\n');
+
+  it('extracts the new section id from a successful duplicate log', () => {
+    expect(parseDuplicatedSectionId(successBody)).toBe(8822);
+  });
+
+  it('tolerates varied spacing after the colon', () => {
+    const body = 'Duplicated section id:12345\nDUPLICATE_BRANCH_SUCCESS';
+    expect(parseDuplicatedSectionId(body)).toBe(12345);
+  });
+
+  it('throws when the success marker is absent (partial/failed response)', () => {
+    const body = 'Home>>...\nDuplicated section id: 8822\nUpdating Server Side Links...';
+    expect(() => parseDuplicatedSectionId(body)).toThrow(/did not report success/);
+  });
+
+  it('throws when success but no id line is present', () => {
+    const body = 'Updating Server Side Links...\nDUPLICATE_BRANCH_SUCCESS';
+    expect(() => parseDuplicatedSectionId(body)).toThrow(/new section ID could not be determined/);
+  });
+
+  it('handles a non-string body by coercing to string', () => {
+    expect(() => parseDuplicatedSectionId(null)).toThrow(/did not report success/);
+    expect(() => parseDuplicatedSectionId(undefined)).toThrow(/did not report success/);
   });
 });
