@@ -7,6 +7,7 @@ Content operations are scoped to a section through `t4.section(id).content`.
 - [List and read content](#list-and-read-content)
 - [Create content](#create-content)
 - [Update content](#update-content)
+- [Reorder content](#reorder-content)
 - [Approve, duplicate, move, or remove](#approve-duplicate-move-or-remove)
 - [Element values](#element-values)
 - [Values returned on read](#values-returned-on-read)
@@ -20,6 +21,8 @@ const items = await t4.section(482).content.list();
 ```
 
 Each summary contains `id`, `name`, `status`, `contentTypeID`, `version`, `lastModified`, `publishDate`, `expiryDate`, `reviewDate`, and `archiveSection`. Summaries do not contain `fields`; call `content.get(id)` to retrieve a full item with resolved fields.
+
+`list()` returns a `ContentList` — an array of content items that also carries `setOrder()` and `reorder()` for changing the display order of content in the section (see [Reorder content](#reorder-content)). It behaves like a normal array everywhere else (`.map()`, `.length`, indexing, `for…of`).
 
 ### Get a content item
 
@@ -125,6 +128,39 @@ await deck.save();
 ```
 
 Each repeater item's sub-fields are resolved into the API's element format automatically, so the mutable `get()` → modify → `save()` path and `content.update()` produce identical results.
+
+## Reorder content
+
+The `ContentList` returned by `content.list()` can reorder content within its section. Both methods call the API immediately and keep the list's in-memory order in sync, so the array reflects the new order as soon as the promise resolves.
+
+### Move a single item
+
+Use `reorder(contentId, options)` with exactly one of `position`, `before`, `after`, or `to`:
+
+```typescript
+const items = await t4.section(482).content.list();
+
+await items.reorder(9132, { position: 2 });   // move to the 2nd position (1-based)
+await items.reorder(9132, { before: 9140 });   // place immediately before another item
+await items.reorder(9132, { after: 9150 });    // place immediately after another item
+await items.reorder(9132, { to: 'first' });    // move to the front
+await items.reorder(9132, { to: 'last' });     // move to the end
+```
+
+`position` is 1-based: `position: 1` is the first slot. A position beyond the end is clamped to the last slot. The `before`/`after` sibling and the item being moved must both exist in the section.
+
+### Set the full order
+
+Use `setOrder(ids)` to replace the entire order at once. Pass every content ID in the section exactly once:
+
+```typescript
+const items = await t4.section(482).content.list();
+await items.setOrder([9150, 9132, 9140]);
+```
+
+If the array omits an ID that is in the section, includes an ID that is not, or repeats an ID, `setOrder()` throws a descriptive error and makes no changes. T4 has no bulk-order endpoint, so `setOrder()` issues one move request per item in sequence.
+
+> Reordering applies to content ordered manually. It does not override a section configured to sort its content automatically (for example alphabetically or by date).
 
 ## Approve, duplicate, move, or remove
 
