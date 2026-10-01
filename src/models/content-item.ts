@@ -919,6 +919,39 @@ export class ContentItem {
       },
     });
   }
+
+  /**
+   * Mirrors this content item into another section.
+   *
+   * Unlike a mirrored section, a mirrored content item has no "source": the same
+   * item (with the same ID) then exists in both this section and the target, and
+   * editing it from either section updates both.
+   *
+   * @param targetSectionId The section to mirror this item into.
+   */
+  async mirror(targetSectionId: number): Promise<void> {
+    if (!Number.isInteger(targetSectionId) || targetSectionId <= 0) {
+      throw new Error(
+        `mirror target must be a positive section ID, received ${targetSectionId}.`,
+      );
+    }
+    if (targetSectionId === this._sectionId) {
+      throw new Error(
+        `Cannot mirror content ${this.id} into section ${targetSectionId}: it already lives there.`,
+      );
+    }
+    // Content in a mirrored section is read-only; mirroring it elsewhere is blocked.
+    await assertSectionNotMirroredCached(this._httpClient, this._sectionId, this.language);
+    await this._httpClient.request<void>({
+      method: 'LINK',
+      path: `/content/${this.language}`,
+      body: {
+        source: this._sectionId,
+        destination: targetSectionId,
+        contents: { [this.id]: [] },
+      },
+    });
+  }
 }
 
 /** Factory function to create a ContentItem with async field resolution */
