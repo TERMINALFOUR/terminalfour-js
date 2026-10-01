@@ -61,6 +61,12 @@ export interface ApiSectionDTO {
   groupIDs?: number[];
   inheritedGroupIDs?: number[];
   contentTypeScopes?: Array<{ id: number; scope: number; inherited: boolean }>;
+  /** Source section ID when this section is a mirror. `0` or absent when it is not a mirror. */
+  mirrorOf?: number;
+  /** `true` when this section is the source of one or more mirrors. */
+  sourceOfMirror?: boolean;
+  /** Breadcrumb path of the mirror source, `&raquo;`-separated. Present on mirror sections. */
+  mirrorOfPath?: string;
   [key: string]: unknown;
 }
 
@@ -191,7 +197,7 @@ export interface MoveContentData {
 
 /** Options for an HTTP request made by the internal HttpClient */
 export interface HttpRequestOptions {
-  method: 'GET' | 'POST' | 'PUT' | 'DELETE' | 'PATCH' | 'MOVE' | 'APPROVE' | 'COPY';
+  method: 'GET' | 'POST' | 'PUT' | 'DELETE' | 'PATCH' | 'MOVE' | 'APPROVE' | 'COPY' | 'LINK';
   path: string;
   body?: unknown;
   headers?: Record<string, string>;

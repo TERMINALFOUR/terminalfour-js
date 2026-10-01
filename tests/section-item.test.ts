@@ -35,6 +35,37 @@ describe('SectionItem', () => {
     expect(new SectionItem({ ...rawSection, status: 2 }, http, 'en').status).toBe('inactive');
   });
 
+  it('mirrorOf and mirrorOfPath are null for a non-mirror section', () => {
+    const http = mockHttpClient();
+    const item = new SectionItem(rawSection, http, 'en');
+    expect(item.mirrorOf).toBeNull();
+    expect(item.mirrorOfPath).toBeNull();
+  });
+
+  it('exposes mirrorOf and decoded mirrorOfPath for a mirror section', () => {
+    const http = mockHttpClient();
+    const item = new SectionItem(
+      {
+        ...rawSection,
+        id: 8820,
+        mirrorOf: 8817,
+        sourceOfMirror: false,
+        mirrorOfPath: 'Home &raquo; samplesite.terminalfour.com &raquo; Doc Example',
+      },
+      http,
+      'en',
+    );
+    expect(item.mirrorOf).toBe(8817);
+    expect(item.mirrorOfPath).toBe('Home \u00BB samplesite.terminalfour.com \u00BB Doc Example');
+  });
+
+  it('treats mirrorOf of 0 as not a mirror', () => {
+    const http = mockHttpClient();
+    const item = new SectionItem({ ...rawSection, mirrorOf: 0, mirrorOfPath: '' }, http, 'en');
+    expect(item.mirrorOf).toBeNull();
+    expect(item.mirrorOfPath).toBeNull();
+  });
+
   it('allows mutable name', () => {
     const http = mockHttpClient();
     const item = new SectionItem(rawSection, http, 'en');
@@ -349,5 +380,32 @@ describe('SectionItem', () => {
       const contentCalls = calls.filter((c) => c.path.startsWith('/content'));
       expect(contentCalls).toHaveLength(0);
     });
+  });
+});
+
+describe('SectionItem — read-only guard', () => {
+  it('save() throws on a mirrored section and makes no write', async () => {
+    const http = mockHttpClient();
+    (http.request as ReturnType<typeof vi.fn>).mockImplementation(async () => {
+      throw new Error('No request should be made');
+    });
+    const item = new SectionItem(
+      { ...rawSection, mirrorOf: 8817 },
+      http,
+      'en',
+    );
+    item.name = 'Changed';
+    await expect(item.save()).rejects.toThrow(
+      /Cannot modify section 233: it is a mirror of section 8817/,
+    );
+    expect((http.request as ReturnType<typeof vi.fn>).mock.calls).toHaveLength(0);
+  });
+
+  it('save() is allowed on a non-mirror section', async () => {
+    const http = mockHttpClient();
+    (http.request as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
+    const item = new SectionItem(rawSection, http, 'en');
+    item.name = 'Changed';
+    await expect(item.save()).resolves.toBeUndefined();
   });
 });

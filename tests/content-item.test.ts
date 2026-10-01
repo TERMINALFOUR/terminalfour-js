@@ -5,6 +5,15 @@ import { ElementResolver, TemplateElement } from '../src/element-resolver.js';
 import { TypeRegistry } from '../src/type-registry.js';
 import { ContentDTO } from '../src/types.js';
 import { ELEMENT_TYPES } from './helpers.js';
+import { cacheSectionMirrorStatus } from '../src/utils.js';
+
+/** Marks the section ids used in these tests as non-mirrors so the read-only
+ * guard resolves from cache without issuing a GET /hierarchy request. */
+function seedNonMirror(http: HttpClient): void {
+  for (const id of [10, 100, 500]) {
+    cacheSectionMirrorStatus(http as unknown as object, id, {});
+  }
+}
 
 function mockHttpClient() {
   return { request: vi.fn() } as unknown as HttpClient;
@@ -53,6 +62,7 @@ describe('ContentItem', () => {
       if (opts.path.startsWith('/list/1/')) return sizeList;
       throw new Error(`Unexpected request: ${opts.path}`);
     });
+    seedNonMirror(http);
     typeRegistry = new TypeRegistry(http);
     resolver = new ElementResolver(http, 'en', typeRegistry);
   });
@@ -533,6 +543,7 @@ describe('ContentItem – additional coverage', () => {
       };
       throw new Error(`Unexpected request: ${opts.path}`);
     });
+    seedNonMirror(http);
     typeRegistry = new TypeRegistry(http);
     resolver = new ElementResolver(http, 'en', typeRegistry);
   });
@@ -1355,5 +1366,126 @@ describe('ContentItem – additional coverage', () => {
       );
       expect((moveCall![0] as { path: string }).path).toBe('/content/fr');
     });
+  });
+
+  describe('mirror()', () => {
+    function mirrorDto(language = 'en'): ContentDTO {
+      return {
+        id: 100, contentTypeID: 44, name: 'Test', language,
+        status: 0, elements: {}, version: 1, owner: { id: 0, type: 'USER' }, channels: [],
+      };
+    }
+
+    it('sends LINK /content/{language} with source, destination, and empty contents array', async () => {
+      (http.request as ReturnType<typeof vi.fn>).mockImplementation(async (opts: { method: string }) => {
+        if (opts.method === 'LINK') return undefined;
+        return ELEMENT_TYPES;
+      });
+
+      const item = await createContentItem(mirrorDto(), http, 10, resolver, templateElements, typeRegistry);
+      await item.mirror(500);
+
+      const linkCall = (http.request as ReturnType<typeof vi.fn>).mock.calls.find(
+        (c: unknown[]) => (c[0] as { method: string }).method === 'LINK',
+      );
+      expect(linkCall).toBeDefined();
+      const body = (linkCall![0] as { body: { source: number; destination: number; contents: Record<string, unknown[]> } }).body;
+      expect(body.source).toBe(10);
+      expect(body.destination).toBe(500);
+      expect(body.contents).toEqual({ '100': [] });
+      expect((linkCall![0] as { path: string }).path).toBe('/content/en');
+    });
+
+    it('uses the item language in the LINK request', async () => {
+      (http.request as ReturnType<typeof vi.fn>).mockImplementation(async (opts: { method: string }) => {
+        if (opts.method === 'LINK') return undefined;
+        return ELEMENT_TYPES;
+      });
+
+      const item = await createContentItem(mirrorDto('fr'), http, 10, resolver, templateElements, typeRegistry);
+      await item.mirror(500);
+
+      const linkCall = (http.request as ReturnType<typeof vi.fn>).mock.calls.find(
+        (c: unknown[]) => (c[0] as { method: string }).method === 'LINK',
+      );
+      expect((linkCall![0] as { path: string }).path).toBe('/content/fr');
+    });
+
+    it('throws on an invalid target and makes no LINK request', async () => {
+      (http.request as ReturnType<typeof vi.fn>).mockImplementation(async () => ELEMENT_TYPES);
+      const item = await createContentItem(mirrorDto(), http, 10, resolver, templateElements, typeRegistry);
+
+      await expect(item.mirror(0)).rejects.toThrow(/positive section ID/);
+      await expect(item.mirror(-3)).rejects.toThrow(/positive section ID/);
+      const linkCall = (http.request as ReturnType<typeof vi.fn>).mock.calls.find(
+        (c: unknown[]) => (c[0] as { method: string }).method === 'LINK',
+      );
+      expect(linkCall).toBeUndefined();
+    });
+
+    it('throws when mirroring into the section it already lives in', async () => {
+      (http.request as ReturnType<typeof vi.fn>).mockImplementation(async () => ELEMENT_TYPES);
+      const item = await createContentItem(mirrorDto(), http, 10, resolver, templateElements, typeRegistry);
+      await expect(item.mirror(10)).rejects.toThrow(/already lives there/);
+    });
+  });
+});
+
+describe('ContentItem – read-only guard in a mirrored section', () => {
+  let http: HttpClient;
+
+  beforeEach(() => {
+    http = mockHttpClient();
+    // Section 10 is a mirror of 8817. The guard fetches it (not seeded here).
+    (http.request as ReturnType<typeof vi.fn>).mockImplementation(
+      async (opts: { method: string; path: string }) => {
+        if (opts.method === 'GET' && opts.path === '/hierarchy/10/en') {
+          return { id: 10, name: 'Mirror', parent: 1, mirrorOf: 8817 };
+        }
+        if (opts.path === '/type/') return ELEMENT_TYPES;
+        if (opts.path.startsWith('/list/1/')) return sizeList;
+        throw new Error(`Blocked path should not be reached: ${opts.method} ${opts.path}`);
+      },
+    );
+  });
+
+  function mutatingCalls(client: HttpClient) {
+    return (client.request as ReturnType<typeof vi.fn>).mock.calls
+      .map((c: unknown[]) => c[0] as { method: string })
+      .filter((o) => o.method === 'POST' || o.method === 'MOVE' || o.method === 'COPY' || o.method === 'LINK');
+  }
+
+  const expectedError = /Cannot modify content in section 10: it is a mirror of section 8817/;
+
+  it('save() throws and makes no write', async () => {
+    const item = new ContentItem(contentDTO, http, 10);
+    item.name = 'Changed';
+    await expect(item.save()).rejects.toThrow(expectedError);
+    expect(mutatingCalls(http)).toHaveLength(0);
+  });
+
+  it('approve() throws and makes no write', async () => {
+    const item = new ContentItem(contentDTO, http, 10);
+    await expect(item.approve()).rejects.toThrow(expectedError);
+    expect(mutatingCalls(http)).toHaveLength(0);
+  });
+
+  it('move() throws and makes no write', async () => {
+    const item = new ContentItem(contentDTO, http, 10);
+    await expect(item.move(500)).rejects.toThrow(expectedError);
+    expect(mutatingCalls(http)).toHaveLength(0);
+  });
+
+  it('mirror() throws and makes no write', async () => {
+    const item = new ContentItem(contentDTO, http, 10);
+    await expect(item.mirror(500)).rejects.toThrow(expectedError);
+    expect(mutatingCalls(http)).toHaveLength(0);
+  });
+
+  it('duplicate() throws and makes no write', async () => {
+    const item = new ContentItem(contentDTO, http, 10);
+    await expect(item.duplicate()).rejects.toThrow(expectedError);
+    await expect(item.duplicate(500)).rejects.toThrow(expectedError);
+    expect(mutatingCalls(http)).toHaveLength(0);
   });
 });
