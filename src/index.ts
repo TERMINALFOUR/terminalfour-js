@@ -6,6 +6,8 @@ export { T4ApiError } from './errors.js';
 
 // Models
 export { ContentItem } from './models/content-item.js';
+export { ContentList } from './models/content-list.js';
+export type { ReorderOptions } from './models/content-list.js';
 export { SectionItem } from './models/section-item.js';
 export { MediaItem } from './models/media-item.js';
 export type { MediaFileInput } from './models/media-item.js';
