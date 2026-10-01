@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { SectionRef } from '../src/section-ref.js';
 import { SubsectionList } from '../src/models/subsection-list.js';
 import { HttpClient } from '../src/http-client.js';
+import { cacheSectionMirrorStatus } from '../src/utils.js';
 
 function mockHttpClient() {
   return { request: vi.fn() } as unknown as HttpClient;
@@ -44,6 +45,9 @@ describe('SubsectionList', () => {
         throw new Error(`Unexpected request: ${opts.method} ${opts.path}`);
       },
     );
+    // Mark the parent section as a non-mirror so the reorder read-only guard
+    // resolves from cache (dedicated mirror tests use a fresh client).
+    cacheSectionMirrorStatus(http as unknown as object, PARENT_ID, {});
     ref = new SectionRef(http, PARENT_ID, 'en');
   });
 
@@ -155,6 +159,41 @@ describe('SubsectionList', () => {
       await expect(list.setOrder([297, 297, 298])).rejects.toThrow(
         /duplicate section ID/,
       );
+    });
+  });
+
+  describe('read-only guard when the parent section is a mirror', () => {
+    let mirrorHttp: HttpClient;
+    let mirrorRef: SectionRef;
+
+    beforeEach(() => {
+      mirrorHttp = mockHttpClient();
+      (mirrorHttp.request as ReturnType<typeof vi.fn>).mockImplementation(
+        async (opts: { method: string; path: string }) => {
+          if (opts.method === 'GET' && opts.path.includes('/subsections')) {
+            return subsectionsResponse(DEFAULT_CHILDREN);
+          }
+          if (opts.method === 'GET' && opts.path === `/hierarchy/${PARENT_ID}/en`) {
+            return { id: PARENT_ID, name: 'Mirror', parent: 1, mirrorOf: 8817 };
+          }
+          throw new Error(`Blocked path should not be reached: ${opts.method} ${opts.path}`);
+        },
+      );
+      mirrorRef = new SectionRef(mirrorHttp, PARENT_ID, 'en');
+    });
+
+    const err = /Cannot modify section 236: it is a mirror of section 8817/;
+
+    it('reorder() throws and makes no index PUT', async () => {
+      const list = await mirrorRef.subsections();
+      await expect(list.reorder(297, { position: 1 })).rejects.toThrow(err);
+      expect(indexCalls(mirrorHttp)).toHaveLength(0);
+    });
+
+    it('setOrder() throws and makes no index PUT', async () => {
+      const list = await mirrorRef.subsections();
+      await expect(list.setOrder([299, 298, 297])).rejects.toThrow(err);
+      expect(indexCalls(mirrorHttp)).toHaveLength(0);
     });
   });
 });
