@@ -119,7 +119,7 @@ article.fields = { Title: 'New Title', Summary: 'Rewritten' };
 await article.save();
 ```
 
-Both styles are tracked and validated the same way. Every field you assign is persisted on `save()`, and assigning a field that doesn't exist on the content type throws `Unknown field "X" on this content type. Valid fields are: ...` — exactly as `content.update()` and single-field mutation do. Assigning a replacement object does not discard valid changes.
+Both styles are tracked and validated the same way. Every field you assign is persisted on `save()`, and assigning a field that doesn't exist on the content type throws `Unknown field "X" on this content type. Valid fields are: ...` — exactly as `content.update()` and single-field mutation do.
 
 `save()` defaults the status to `'pending'` to match T4's approval workflow. Set `item.status = 'approved'` before saving if the item must remain approved.
 
