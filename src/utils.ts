@@ -482,3 +482,122 @@ export class TtlValue<V> {
     this.entry = null;
   }
 }
+
+/**
+ * Minimal structural shape of the HttpClient needed by the mirror guard.
+ * Declared structurally (rather than importing HttpClient) to keep utils.ts a
+ * dependency-free leaf module and avoid a circular import.
+ */
+interface MirrorGuardClient {
+  request<T>(options: { method: string; path: string }): Promise<T>;
+}
+
+/** Raw mirror-relevant fields from GET /hierarchy/{id}/{language}. */
+interface MirrorSectionShape {
+  mirrorOf?: number;
+}
+
+/** Per-client cache of section mirror status, keyed by section ID. */
+const mirrorStatusCache = new WeakMap<
+  object,
+  Map<number, { mirrorOf: number | null; expiresAt: number; epoch: number }>
+>();
+
+/** Normalises a raw `mirrorOf` to the source ID, or `null` when not a mirror. */
+function readMirrorOf(section: MirrorSectionShape | null | undefined): number | null {
+  const value = section?.mirrorOf;
+  return typeof value === 'number' && value > 0 ? value : null;
+}
+
+/**
+ * Records a section's mirror status in the per-client cache. Call this from
+ * paths that have already fetched the section DTO so a later content-path
+ * check can reuse it without an extra request.
+ */
+export function cacheSectionMirrorStatus(
+  client: object,
+  sectionId: number,
+  section: MirrorSectionShape | null | undefined,
+): void {
+  let perClient = mirrorStatusCache.get(client);
+  if (!perClient) {
+    perClient = new Map();
+    mirrorStatusCache.set(client, perClient);
+  }
+  perClient.set(sectionId, {
+    mirrorOf: readMirrorOf(section),
+    expiresAt: Date.now() + DEFAULT_CACHE_TTL,
+    epoch: getCacheEpoch(),
+  });
+}
+
+/** Reads a cached mirror status, or `undefined` when absent/stale. */
+function getCachedMirrorStatus(client: object, sectionId: number): number | null | undefined {
+  const entry = mirrorStatusCache.get(client)?.get(sectionId);
+  if (!entry) return undefined;
+  if (entry.epoch < getCacheEpoch() || Date.now() > entry.expiresAt) {
+    mirrorStatusCache.get(client)?.delete(sectionId);
+    return undefined;
+  }
+  return entry.mirrorOf;
+}
+
+/**
+ * Throws a friendly, read-only error when `section` is a mirror. For callers
+ * that already hold the section DTO (section-level write paths), so no request
+ * is made. Also records the status in the cache for content-path reuse.
+ *
+ * @param scope `'section'` for section-level edits, `'content'` for edits to
+ *   content inside the section — controls the wording.
+ */
+export function assertSectionNotMirrored(
+  client: object,
+  sectionId: number,
+  section: MirrorSectionShape | null | undefined,
+  scope: 'section' | 'content' = 'section',
+): void {
+  cacheSectionMirrorStatus(client, sectionId, section);
+  const mirrorOf = readMirrorOf(section);
+  if (mirrorOf !== null) {
+    throw mirrorError(sectionId, mirrorOf, scope);
+  }
+}
+
+/**
+ * Throws a friendly, read-only error when the section is a mirror, fetching the
+ * section DTO (cached per client, 5-min TTL) when its status isn't already
+ * known. For content write paths that don't otherwise load the section.
+ */
+export async function assertSectionNotMirroredCached(
+  client: MirrorGuardClient,
+  sectionId: number,
+  language: string,
+  scope: 'section' | 'content' = 'content',
+): Promise<void> {
+  let mirrorOf = getCachedMirrorStatus(client, sectionId);
+  if (mirrorOf === undefined) {
+    const section = await client.request<MirrorSectionShape>({
+      method: 'GET',
+      path: `/hierarchy/${sectionId}/${language}`,
+    });
+    cacheSectionMirrorStatus(client, sectionId, section);
+    mirrorOf = readMirrorOf(section);
+  }
+  if (mirrorOf !== null) {
+    throw mirrorError(sectionId, mirrorOf, scope);
+  }
+}
+
+/** Builds the read-only mirror error. */
+function mirrorError(sectionId: number, mirrorOf: number, scope: 'section' | 'content'): Error {
+  if (scope === 'content') {
+    return new Error(
+      `Cannot modify content in section ${sectionId}: it is a mirror of section ${mirrorOf} ` +
+      `and is read-only. Edit the content in the source section instead.`,
+    );
+  }
+  return new Error(
+    `Cannot modify section ${sectionId}: it is a mirror of section ${mirrorOf} ` +
+    `and is read-only. Edit the source section instead.`,
+  );
+}

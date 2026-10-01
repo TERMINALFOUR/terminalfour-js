@@ -3,6 +3,7 @@ import { ContentResource } from '../src/resources/content-resource.js';
 import { HttpClient } from '../src/http-client.js';
 import { ContentDTO } from '../src/types.js';
 import { ELEMENT_TYPES } from './helpers.js';
+import { cacheSectionMirrorStatus } from '../src/utils.js';
 
 function mockHttpClient() {
   return { request: vi.fn() } as unknown as HttpClient;
@@ -48,6 +49,7 @@ const createdDTO: ContentDTO = {
 function setupMocks(http: HttpClient) {
   (http.request as ReturnType<typeof vi.fn>).mockImplementation(async (opts: { method: string; path: string }) => {
     if (opts.path === '/type/') return ELEMENT_TYPES;
+    if (opts.method === 'GET' && opts.path === '/hierarchy/233/en') return { id: 233, name: 'Section', parent: 1 };
     if (opts.path === '/content/type/44/233') return mockTemplate;
     if (opts.path === '/contenttype/44') return mockRawContentType;
     if (opts.path.startsWith('/list/1/')) return sizeList;
@@ -67,6 +69,9 @@ describe('ContentResource', () => {
   beforeEach(() => {
     http = mockHttpClient();
     setupMocks(http);
+    // Mark section 233 as a non-mirror so the read-only guard resolves from
+    // cache without issuing a GET /hierarchy (tests that set their own mocks).
+    cacheSectionMirrorStatus(http as unknown as object, 233, {});
     resource = new ContentResource(http, 233, 'en');
   });
 
@@ -784,6 +789,71 @@ describe('ContentResource', () => {
 
       const postCall = calls.find((c) => c.method === 'POST' && c.path.startsWith('/content/'));
       expect(postCall).toBeUndefined();
+    });
+  });
+
+  describe('read-only guard for content in a mirrored section', () => {
+    let mirroredHttp: HttpClient;
+    let mirroredResource: ContentResource;
+
+    beforeEach(() => {
+      mirroredHttp = mockHttpClient();
+      // Section 233 is a mirror of 8817. No cache seed — the guard fetches it.
+      (mirroredHttp.request as ReturnType<typeof vi.fn>).mockImplementation(
+        async (opts: { method: string; path: string }) => {
+          if (opts.method === 'GET' && opts.path === '/hierarchy/233/en') {
+            return { id: 233, name: 'Mirror', parent: 1, mirrorOf: 8817 };
+          }
+          if (opts.path === '/type/') return ELEMENT_TYPES;
+          if (opts.path === '/content/type/44/233') return mockTemplate;
+          if (opts.path === '/contenttype/44') return mockRawContentType;
+          if (opts.method === 'GET' && /^\/content\/233\/\d+\/en$/.test(opts.path)) return createdDTO;
+          throw new Error(`Blocked path should not be reached: ${opts.method} ${opts.path}`);
+        },
+      );
+      mirroredResource = new ContentResource(mirroredHttp, 233, 'en');
+    });
+
+    function writeCalls(http: HttpClient) {
+      return (http.request as ReturnType<typeof vi.fn>).mock.calls
+        .map((c: unknown[]) => c[0] as { method: string; path: string })
+        .filter((o) => o.method === 'POST' || o.method === 'DELETE' || o.method === 'APPROVE');
+    }
+
+    const expectedError = /Cannot modify content in section 233: it is a mirror of section 8817/;
+
+    it('create() throws and makes no write', async () => {
+      await expect(mirroredResource.create({ type: 44, name: 'X', fields: {} })).rejects.toThrow(expectedError);
+      expect(writeCalls(mirroredHttp)).toHaveLength(0);
+    });
+
+    it('update() throws and makes no write', async () => {
+      await expect(mirroredResource.update(999, { name: 'X' })).rejects.toThrow(expectedError);
+      expect(writeCalls(mirroredHttp)).toHaveLength(0);
+    });
+
+    it('delete() throws and makes no write', async () => {
+      await expect(mirroredResource.delete(999)).rejects.toThrow(expectedError);
+      expect(writeCalls(mirroredHttp)).toHaveLength(0);
+    });
+
+    it('purge() throws and makes no write', async () => {
+      await expect(mirroredResource.purge(999)).rejects.toThrow(expectedError);
+      expect(writeCalls(mirroredHttp)).toHaveLength(0);
+    });
+
+    it('approveAll() throws and makes no write', async () => {
+      await expect(mirroredResource.approveAll()).rejects.toThrow(expectedError);
+      expect(writeCalls(mirroredHttp)).toHaveLength(0);
+    });
+
+    it('caches the mirror status — a second blocked call does not refetch the section', async () => {
+      await expect(mirroredResource.create({ type: 44, name: 'X', fields: {} })).rejects.toThrow(expectedError);
+      await expect(mirroredResource.delete(999)).rejects.toThrow(expectedError);
+      const hierarchyGets = (mirroredHttp.request as ReturnType<typeof vi.fn>).mock.calls
+        .map((c: unknown[]) => c[0] as { method: string; path: string })
+        .filter((o) => o.method === 'GET' && o.path === '/hierarchy/233/en');
+      expect(hierarchyGets).toHaveLength(1);
     });
   });
 });

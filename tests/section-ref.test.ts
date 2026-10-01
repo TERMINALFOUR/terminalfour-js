@@ -2058,3 +2058,116 @@ describe('SectionRef', () => {
     });
   });
 });
+
+describe('SectionRef — read-only guard for a mirrored section', () => {
+  let http: HttpClient;
+  let ref: SectionRef;
+
+  const mirrorSection = { id: 233, name: 'Mirror', parent: 1, status: 0, mirrorOf: 8817 };
+
+  beforeEach(() => {
+    http = mockHttpClient();
+    (SectionRef as unknown as { metaTagCache: unknown }).metaTagCache = null;
+    ref = new SectionRef(http, 233, 'en');
+  });
+
+  function allMock(result: unknown) {
+    (http.request as ReturnType<typeof vi.fn>).mockImplementation(async (opts: { method: string; path: string }) => {
+      if (opts.method === 'GET' && opts.path === '/hierarchy/233/en') return result;
+      if (opts.method === 'GET' && opts.path === '/meta') return [];
+      throw new Error(`Blocked path should not be reached: ${opts.method} ${opts.path}`);
+    });
+  }
+
+  function writeCalls() {
+    return (http.request as ReturnType<typeof vi.fn>).mock.calls
+      .map((c: unknown[]) => c[0] as { method: string })
+      .filter((o) => o.method === 'PUT' || o.method === 'POST');
+  }
+
+  const err = /Cannot modify section 233: it is a mirror of section 8817/;
+
+  it('update() throws and makes no write', async () => {
+    allMock(mirrorSection);
+    await expect(ref.update({ name: 'New' })).rejects.toThrow(err);
+    expect(writeCalls()).toHaveLength(0);
+  });
+
+  it('setPageLayouts() throws and makes no write', async () => {
+    allMock(mirrorSection);
+    await expect(ref.setPageLayouts([{ channelId: 1, pageLayout: 5 }])).rejects.toThrow(err);
+    expect(writeCalls()).toHaveLength(0);
+  });
+
+  it('setMetaDatas() throws and makes no write', async () => {
+    allMock(mirrorSection);
+    await expect(ref.setMetaDatas({ 'og:title': 'x' })).rejects.toThrow(err);
+    expect(writeCalls()).toHaveLength(0);
+  });
+
+  it('setEditRights() throws and makes no write', async () => {
+    allMock(mirrorSection);
+    await expect(ref.setEditRights({ users: [30] })).rejects.toThrow(err);
+    expect(writeCalls()).toHaveLength(0);
+  });
+
+  it('removeEditRights() throws and makes no write', async () => {
+    allMock(mirrorSection);
+    await expect(ref.removeEditRights({ users: [30] })).rejects.toThrow(err);
+    expect(writeCalls()).toHaveLength(0);
+  });
+
+  it('setContentTypes() throws and makes no write', async () => {
+    allMock(mirrorSection);
+    await expect(ref.setContentTypes([{ id: 44, scope: 'section' }])).rejects.toThrow(err);
+    expect(writeCalls()).toHaveLength(0);
+  });
+
+  it('removeContentTypes() throws and makes no write', async () => {
+    allMock(mirrorSection);
+    await expect(ref.removeContentTypes([44])).rejects.toThrow(err);
+    expect(writeCalls()).toHaveLength(0);
+  });
+
+  it('addSection() throws and makes no write', async () => {
+    allMock(mirrorSection);
+    await expect(ref.addSection({ name: 'Child' })).rejects.toThrow(err);
+    expect(writeCalls()).toHaveLength(0);
+  });
+
+  it('delete() is ALLOWED on a mirrored section (unmirror escape hatch)', async () => {
+    (http.request as ReturnType<typeof vi.fn>).mockImplementation(async (opts: { method: string; path: string }) => {
+      if (opts.method === 'GET' && opts.path === '/hierarchy/233/en') return mirrorSection;
+      if (opts.method === 'PUT' && opts.path === '/hierarchy/233/en') return undefined;
+      throw new Error(`Unexpected: ${opts.method} ${opts.path}`);
+    });
+    await expect(ref.delete()).resolves.toBeUndefined();
+    const put = (http.request as ReturnType<typeof vi.fn>).mock.calls
+      .map((c: unknown[]) => c[0] as { method: string; body?: { status?: string } })
+      .find((o) => o.method === 'PUT');
+    expect(put).toBeDefined();
+    expect(put!.body!.status).toBe('2'); // inactive
+  });
+
+  it('purge() is ALLOWED on a mirrored (inactive) section', async () => {
+    (http.request as ReturnType<typeof vi.fn>).mockImplementation(async (opts: { method: string; path: string }) => {
+      if (opts.method === 'GET' && opts.path === '/hierarchy/233/en') return { ...mirrorSection, status: 2 };
+      if (opts.method === 'POST' && opts.path === '/hierarchy/purge') return undefined;
+      throw new Error(`Unexpected: ${opts.method} ${opts.path}`);
+    });
+    await expect(ref.purge()).resolves.toBeUndefined();
+    const purge = (http.request as ReturnType<typeof vi.fn>).mock.calls
+      .map((c: unknown[]) => c[0] as { method: string; path: string })
+      .find((o) => o.method === 'POST' && o.path === '/hierarchy/purge');
+    expect(purge).toBeDefined();
+  });
+
+  it('move() is ALLOWED on a mirrored section', async () => {
+    (http.request as ReturnType<typeof vi.fn>).mockResolvedValueOnce(undefined);
+    await expect(ref.move(500)).resolves.toBeUndefined();
+    const moveCall = (http.request as ReturnType<typeof vi.fn>).mock.calls
+      .map((c: unknown[]) => c[0] as { method: string })
+      .find((o) => o.method === 'MOVE');
+    expect(moveCall).toBeDefined();
+  });
+});

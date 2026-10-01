@@ -110,7 +110,19 @@ await t4.section(8817).mirror(8331, {
 
 Mirroring must be enabled on the T4 instance. The SDK checks this first and throws a clear error if it is disabled, before attempting the operation. Mirroring always applies to the whole branch below the source section.
 
-> Mirrored sections and their content are read-only in T4. Editing them through the SDK is not yet guarded — avoid writing to a section that is a mirror (see [Read and update a section](#read-and-update-a-section) for how to detect one via `mirrorOf`).
+#### Mirrored sections are read-only
+
+A mirror reflects its source, so the SDK blocks edits to a mirrored section and its content, throwing an error that names the source section:
+
+```typescript
+await t4.section(8820).update({ name: 'x' });
+// Error: Cannot modify section 8820: it is a mirror of section 8817 and is read-only.
+//        Edit the source section instead.
+```
+
+Blocked on a mirror: `update`, `addSection`, `setPageLayouts`, `setMetaDatas`, `setEditRights`, `removeEditRights`, `setContentTypes`, `removeContentTypes`, `SectionItem.save()`, and all content writes in the section (`content.create`/`update`/`delete`/`purge`/`approveAll`, and a content item's `save`/`approve`/`move`/`duplicate`).
+
+Still allowed: `delete()` and `purge()` (how you remove a mirror), `move()`, `publish()`, and all reads. Detect a mirror via `mirrorOf` (see [Read and update a section](#read-and-update-a-section)).
 
 ## Navigate the section tree
 
