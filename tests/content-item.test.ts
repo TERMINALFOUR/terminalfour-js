@@ -1011,6 +1011,119 @@ describe('ContentItem – additional coverage', () => {
     });
   });
 
+  describe('wholesale fields replacement', () => {
+    it('throws Unknown field when the replacement object has a field not on the content type', async () => {
+      const item = await createContentItem(contentDTO, http, 10, resolver, templateElements, typeRegistry);
+
+      item.fields = { Title: 'Updated', Nonexistent: 'ghost value' };
+
+      await expect(item.save()).rejects.toThrow('Unknown field "Nonexistent"');
+      await expect(item.save()).rejects.toThrow('Valid fields are:');
+    });
+
+    it('persists every valid field in the replacement object (no silent drop)', async () => {
+      const item = await createContentItem(contentDTO, http, 10, resolver, templateElements, typeRegistry);
+
+      item.fields = { Title: 'Wholesale Title' };
+
+      const updatedDTO: ContentDTO = {
+        ...contentDTO,
+        elements: { ...contentDTO.elements, 'Title#2:1': 'Wholesale Title' },
+        version: 2,
+      };
+      (http.request as ReturnType<typeof vi.fn>).mockResolvedValueOnce(updatedDTO);
+
+      await item.save();
+
+      const saveCall = (http.request as ReturnType<typeof vi.fn>).mock.calls.find(
+        (c: unknown[]) => {
+          const opts = c[0] as { method: string; path: string };
+          return opts.method === 'POST' && opts.path.includes('/content/');
+        },
+      );
+      expect(saveCall).toBeDefined();
+      const body = (saveCall![0] as { body: { elements: Record<string, unknown> } }).body;
+      expect(body.elements['Title#2:1']).toBe('Wholesale Title');
+    });
+
+    it('re-resolves list values assigned through a wholesale replacement', async () => {
+      const item = await createContentItem(contentDTO, http, 10, resolver, templateElements, typeRegistry);
+
+      item.fields = { Radio: 'Small' };
+
+      const updatedDTO: ContentDTO = {
+        ...contentDTO,
+        elements: { ...contentDTO.elements, 'Radio#12:9': '1:2' },
+        version: 2,
+      };
+      (http.request as ReturnType<typeof vi.fn>).mockResolvedValueOnce(updatedDTO);
+
+      await item.save();
+
+      const saveCall = (http.request as ReturnType<typeof vi.fn>).mock.calls.find(
+        (c: unknown[]) => {
+          const opts = c[0] as { method: string; path: string };
+          return opts.method === 'POST' && opts.path.includes('/content/');
+        },
+      );
+      const body = (saveCall![0] as { body: { elements: Record<string, unknown> } }).body;
+      expect(body.elements['Radio#12:9']).toBe('1:2');
+    });
+
+    it('re-establishes dirty tracking so property-level mutation after replacement is persisted', async () => {
+      const item = await createContentItem(contentDTO, http, 10, resolver, templateElements, typeRegistry);
+
+      item.fields = { Title: 'From wholesale' };
+      item.fields.Radio = 'Small';
+
+      const updatedDTO: ContentDTO = {
+        ...contentDTO,
+        elements: { ...contentDTO.elements, 'Title#2:1': 'From wholesale', 'Radio#12:9': '1:2' },
+        version: 2,
+      };
+      (http.request as ReturnType<typeof vi.fn>).mockResolvedValueOnce(updatedDTO);
+
+      await item.save();
+
+      const saveCall = (http.request as ReturnType<typeof vi.fn>).mock.calls.find(
+        (c: unknown[]) => {
+          const opts = c[0] as { method: string; path: string };
+          return opts.method === 'POST' && opts.path.includes('/content/');
+        },
+      );
+      const body = (saveCall![0] as { body: { elements: Record<string, unknown> } }).body;
+      expect(body.elements['Title#2:1']).toBe('From wholesale');
+      expect(body.elements['Radio#12:9']).toBe('1:2');
+    });
+
+    it('does not silently drop valid changes when a replacement object is assigned', async () => {
+      const item = await createContentItem(contentDTO, http, 10, resolver, templateElements, typeRegistry);
+
+      // Regression guard: the pre-fix behaviour wrote back only the original
+      // raw elements, silently discarding the new Title value.
+      item.fields = { Title: 'Must Persist' };
+
+      const updatedDTO: ContentDTO = {
+        ...contentDTO,
+        elements: { ...contentDTO.elements, 'Title#2:1': 'Must Persist' },
+        version: 2,
+      };
+      (http.request as ReturnType<typeof vi.fn>).mockResolvedValueOnce(updatedDTO);
+
+      await item.save();
+
+      const saveCall = (http.request as ReturnType<typeof vi.fn>).mock.calls.find(
+        (c: unknown[]) => {
+          const opts = c[0] as { method: string; path: string };
+          return opts.method === 'POST' && opts.path.includes('/content/');
+        },
+      );
+      const body = (saveCall![0] as { body: { elements: Record<string, unknown> } }).body;
+      expect(body.elements['Title#2:1']).toBe('Must Persist');
+      expect(body.elements['Title#2:1']).not.toBe('Hello');
+    });
+  });
+
   describe('file size formatting', () => {
     it('formats bytes for small files', async () => {
       const dto: ContentDTO = {

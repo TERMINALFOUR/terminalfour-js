@@ -111,6 +111,16 @@ article.archiveSection = 236;
 await article.save();
 ```
 
+You can change one field at a time (`article.fields['Title'] = '...'`) or assign a whole new `fields` object at once:
+
+```typescript
+const article = await t4.section(482).content.get(9132);
+article.fields = { Title: 'New Title', Summary: 'Rewritten' };
+await article.save();
+```
+
+Both styles are tracked and validated the same way. Every field you assign is persisted on `save()`, and assigning a field that doesn't exist on the content type throws `Unknown field "X" on this content type. Valid fields are: ...` — exactly as `content.update()` and single-field mutation do.
+
 `save()` defaults the status to `'pending'` to match T4's approval workflow. Set `item.status = 'approved'` before saving if the item must remain approved.
 
 `save()` resolves every field type the same way `content.create()` and `content.update()` do — including Repeater fields. A repeater is read back as an array of `{ name, fields }` items (see [Values returned on read](#values-returned-on-read)), and you assign the same friendly shape back:
