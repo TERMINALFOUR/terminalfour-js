@@ -6,7 +6,7 @@ import {
   AddSectionData,
   ApiSectionDTO,
 } from './types.js';
-import { resolveLanguage, mapStatus, flattenGroups, STATUS_CODES, AUTH_LEVEL_MAP, debugWarn, DEFAULT_CACHE_TTL, getCacheEpoch, assertRequired, assertNotEmptyIfPresent } from './utils.js';
+import { resolveLanguage, mapStatus, flattenGroups, STATUS_CODES, AUTH_LEVEL_MAP, debugWarn, DEFAULT_CACHE_TTL, getCacheEpoch, assertRequired, assertNotEmptyIfPresent, assertSectionNotMirrored, cacheSectionMirrorStatus } from './utils.js';
 import { ContentResource } from './resources/content-resource.js';
 import { SectionItem } from './models/section-item.js';
 import { SubsectionList } from './models/subsection-list.js';
@@ -291,6 +291,7 @@ export class SectionRef {
       method: 'GET',
       path: `/hierarchy/${this.sectionId}/${language}`,
     });
+    assertSectionNotMirrored(this.httpClient, this.sectionId, section);
 
     // Build a mutable map of existing channel entries
     const channelMap = new Map(
@@ -410,6 +411,7 @@ export class SectionRef {
       }),
       this.getMetaTagDefinitions(),
     ]);
+    assertSectionNotMirrored(this.httpClient, this.sectionId, section);
 
     // Start with existing metaDatas
     const existingMetas = [...(section.metaDatas ?? [])];
@@ -589,6 +591,8 @@ export class SectionRef {
       path: `/hierarchy/${this.sectionId}/${language}`,
     });
 
+    assertSectionNotMirrored(this.httpClient, this.sectionId, section);
+
     // Merge new IDs into existing (deduplicated)
     const mergedUsers = data.users
       ? [...new Set([...(section.userIDs ?? []), ...data.users])]
@@ -625,6 +629,8 @@ export class SectionRef {
       method: 'GET',
       path: `/hierarchy/${this.sectionId}/${language}`,
     });
+
+    assertSectionNotMirrored(this.httpClient, this.sectionId, section);
 
     const removeUsers = new Set(data.users ?? []);
     const removeGroups = new Set(data.groups ?? []);
@@ -692,6 +698,8 @@ export class SectionRef {
       path: `/hierarchy/${this.sectionId}/${language}`,
     });
 
+    assertSectionNotMirrored(this.httpClient, this.sectionId, section);
+
     const existing = section.contentTypeScopes ?? [];
 
     // Build a map of existing scopes, then merge in the new ones
@@ -725,6 +733,8 @@ export class SectionRef {
       path: `/hierarchy/${this.sectionId}/${language}`,
     });
 
+    assertSectionNotMirrored(this.httpClient, this.sectionId, section);
+
     const removeSet = new Set(ids);
     const updated = {
       ...section,
@@ -752,6 +762,7 @@ export class SectionRef {
       method: 'GET',
       path: `/hierarchy/${this.sectionId}/${language}`,
     });
+    assertSectionNotMirrored(this.httpClient, this.sectionId, parentSection);
 
     const accessControlType = parentSection.accessControl?.type ?? 0;
     const metaDataTypeId = parentSection.metaData?.type ?? 0;
@@ -851,9 +862,12 @@ export class SectionRef {
     return new SectionItem(childRaw, this.httpClient, language, customFields, this.mediaCreateFn);
   }
 
-  /** Deletes (deactivates) this section by setting its status to inactive. */
+  /**
+   * Deletes (deactivates) this section by setting its status to inactive.
+   * Allowed on mirrored sections — deactivating is how a mirror is removed.
+   */
   async delete(options?: LanguageOption): Promise<void> {
-    await this.update({ status: 'inactive' }, options);
+    await this.update({ status: 'inactive' }, options, true);
   }
 
   /**
@@ -970,6 +984,7 @@ export class SectionRef {
   async update(
     data: { name?: string; show?: boolean; status?: 'approved' | 'pending' | 'inactive'; customFields?: Record<string, unknown> },
     options?: LanguageOption,
+    skipMirrorCheck = false,
   ): Promise<SectionItem> {
     // This path PUTs directly (it does not go through SectionItem.save()), so
     // guard the name here. Present-only: omitting name is valid (e.g. delete()
@@ -981,6 +996,13 @@ export class SectionRef {
       method: 'GET',
       path: `/hierarchy/${this.sectionId}/${language}`,
     });
+    // delete()/purge() unmirror a section, so they skip this guard. Every other
+    // caller of update() is a genuine content modification and is blocked.
+    if (!skipMirrorCheck) {
+      assertSectionNotMirrored(this.httpClient, this.sectionId, section);
+    } else {
+      cacheSectionMirrorStatus(this.httpClient, this.sectionId, section);
+    }
 
     const updated = {
       ...section,

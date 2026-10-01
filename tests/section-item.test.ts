@@ -382,3 +382,30 @@ describe('SectionItem', () => {
     });
   });
 });
+
+describe('SectionItem — read-only guard', () => {
+  it('save() throws on a mirrored section and makes no write', async () => {
+    const http = mockHttpClient();
+    (http.request as ReturnType<typeof vi.fn>).mockImplementation(async () => {
+      throw new Error('No request should be made');
+    });
+    const item = new SectionItem(
+      { ...rawSection, mirrorOf: 8817 },
+      http,
+      'en',
+    );
+    item.name = 'Changed';
+    await expect(item.save()).rejects.toThrow(
+      /Cannot modify section 233: it is a mirror of section 8817/,
+    );
+    expect((http.request as ReturnType<typeof vi.fn>).mock.calls).toHaveLength(0);
+  });
+
+  it('save() is allowed on a non-mirror section', async () => {
+    const http = mockHttpClient();
+    (http.request as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
+    const item = new SectionItem(rawSection, http, 'en');
+    item.name = 'Changed';
+    await expect(item.save()).resolves.toBeUndefined();
+  });
+});
