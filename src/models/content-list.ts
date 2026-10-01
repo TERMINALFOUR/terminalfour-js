@@ -1,6 +1,7 @@
 import { HttpClient } from '../http-client.js';
 import { ContentItem } from './content-item.js';
 import { OrderedList } from './ordered-list.js';
+import { assertSectionNotMirroredCached } from '../utils.js';
 
 export type { ReorderOptions } from './ordered-list.js';
 
@@ -49,5 +50,10 @@ export class ContentList extends OrderedList<ContentItem> {
       path: `/hierarchy/${this._sectionId}/${this._language}/contents/${contentId}/index`,
       body: { id: contentId, index },
     });
+  }
+
+  /** Content in a mirrored section is read-only, so reordering is blocked. */
+  protected async assertWritable(): Promise<void> {
+    await assertSectionNotMirroredCached(this._httpClient, this._sectionId, this._language, 'content');
   }
 }

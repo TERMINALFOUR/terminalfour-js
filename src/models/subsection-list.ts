@@ -1,5 +1,6 @@
 import { HttpClient } from '../http-client.js';
 import { OrderedList } from './ordered-list.js';
+import { assertSectionNotMirroredCached } from '../utils.js';
 
 /** A direct child section as returned by `section(id).subsections()`. */
 export interface SubsectionSummary {
@@ -53,5 +54,13 @@ export class SubsectionList extends OrderedList<SubsectionSummary> {
       path: `/hierarchy/${this._parentSectionId}/${this._language}/subsections/${childId}/index`,
       body: { id: childId, index },
     });
+  }
+
+  /**
+   * A mirrored section is read-only, so reordering its children is blocked.
+   * Scoped to the parent section (whose children are being reordered).
+   */
+  protected async assertWritable(): Promise<void> {
+    await assertSectionNotMirroredCached(this._httpClient, this._parentSectionId, this._language, 'section');
   }
 }
