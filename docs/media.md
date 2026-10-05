@@ -5,6 +5,7 @@ Use `t4.media` for files, `t4.mediaCategory(id)` for category operations, and `t
 ## Contents
 
 - [Media items](#media-items)
+- [Download a media file](#download-a-media-file)
 - [Create and update media](#create-and-update-media)
 - [Delete or purge media](#delete-or-purge-media)
 - [Media categories](#media-categories)
@@ -35,6 +36,24 @@ const media = await t4.media.get(10928);
 | `path` | `'Media Library » Images » Cats'` |
 | `categories` | Category IDs, such as `[366]` |
 | `fields` | Custom values, such as `{ 'Photo Credit': 'Jane Smith' }` |
+
+### Download a media file
+
+Downloading is supported, but the SDK gives you a **URL, not the file bytes**. There is no `download()` method — `t4.media.get(id)` returns a `MediaItem` whose `downloadUrl` points at the file over HTTP. Fetching the bytes is left to you, so you can stream, save, or forward them however your application needs.
+
+```typescript
+const media = await t4.media.get(10928);
+
+console.log(media.downloadUrl);  // URL the file is served from
+console.log(media.thumbnailUrl); // smaller preview image, where available
+
+// Fetch the bytes yourself when you need them server-side:
+const res = await fetch(media.downloadUrl);
+const buffer = Buffer.from(await res.arrayBuffer());
+```
+
+- **`downloadUrl`** is the full file. It is present for every media item.
+- **`thumbnailUrl`** is a smaller preview, only produced for media Terminalfour can thumbnail (such as images). For media with no thumbnail — a CSV, for example — it is an empty string, so check it before use.
 
 ### Non-binary media
 
