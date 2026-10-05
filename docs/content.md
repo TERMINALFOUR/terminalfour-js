@@ -207,6 +207,22 @@ The SDK converts raw API values before assigning them to `ContentItem.fields`:
 | Keyword Selector | `{ or: [...] }` structure |
 | Repeater | Array of `{ name, fields }` with recursively resolved fields |
 
+### Download a Media, File, or Image element
+
+Media, File, and Image elements resolve to an object with a `downloadLink` — the URL the file is served from. The SDK gives you the URL, not the file bytes, so fetch them yourself when you need them server-side:
+
+```typescript
+const item = await t4.section(482).content.get(1234);
+
+const photo = item.fields['Photo']; // a Media, File, or Image element
+if (photo?.downloadLink) {
+  const res = await fetch(photo.downloadLink);
+  const buffer = Buffer.from(await res.arrayBuffer());
+}
+```
+
+For File and Image elements, `downloadLink` is only present once the file is resolved — guard for it as above before fetching.
+
 ---
 
 **Previous:** [Sections](./sections.md) · **Next:** [Content Types](./content-types.md)
