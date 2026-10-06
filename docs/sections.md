@@ -5,7 +5,7 @@
 ## Contents
 
 - [Read and update a section](#read-and-update-a-section)
-- [Create, delete, purge, or move](#create-delete-purge-or-move)
+- [Create, delete, purge, move, or mirror](#create-delete-purge-move-or-mirror)
 - [Navigate the section tree](#navigate-the-section-tree)
 - [Manage section configuration](#manage-section-configuration)
 - [Publish](#publish)
@@ -32,6 +32,8 @@ const section = await t4.section(233).get();
 | `pathMembers` | `number[]` | no | Section IDs in the path |
 | `lastModified` | `Date \| null` | no | Last modification date |
 | `accessControl` | `{ active, enabled }` | no | Access control state |
+| `mirrorOf` | `number \| null` | no | Source section ID when this section is a mirror; `null` otherwise |
+| `mirrorOfPath` | `string \| null` | no | Breadcrumb of the mirror source; `null` when not a mirror |
 | `customFields` | `Record<string, unknown> \| null` | yes | Resolved metadata content fields, or `null` |
 
 ### Direct update
@@ -64,7 +66,7 @@ await section.save();
 
 The SDK will throw when no metadata content type is configured on the instance and you attempt add customFields.
 
-## Create, delete, purge, or move
+## Create, delete, purge, move, or mirror
 
 ### Create a child section
 
@@ -88,6 +90,66 @@ await t4.section(500).delete();   // soft delete: sets status to inactive
 await t4.section(500).purge();    // permanent removal; section must be inactive first
 await t4.section(500).move(233);  // move under section 233
 ```
+
+### Mirror a branch
+
+Mirror this section's entire branch under a destination parent. A mirror is a read-only reflection of the source — the mirrored sections and their content stay in sync with the source.
+
+```typescript
+await t4.section(8817).mirror(8331); // mirror section 8817's branch under section 8331
+```
+
+The second argument configures how access control is handled and whether link targets are retained:
+
+```typescript
+await t4.section(8817).mirror(8331, {
+  accessControl: 'duplicate',   // 'ignore' (default), 'duplicate', or 'mirror'
+  retainLinkTargets: true,       // keep section/content link targets; default false
+});
+```
+
+Mirroring must be enabled on the T4 instance. The SDK checks this first and throws a clear error if it is disabled, before attempting the operation. Mirroring always applies to the whole branch below the source section.
+
+#### Mirrored sections are read-only
+
+A mirror reflects its source, so the SDK blocks edits to a mirrored section and its content, throwing an error that names the source section:
+
+```typescript
+await t4.section(8820).update({ name: 'x' });
+// Error: Cannot modify section 8820: it is a mirror of section 8817 and is read-only.
+//        Edit the source section instead.
+```
+
+Blocked on a mirror: `update`, `addSection`, `setPageLayouts`, `setMetaDatas`, `setEditRights`, `removeEditRights`, `setContentTypes`, `removeContentTypes`, `SectionItem.save()`, and all content writes in the section (`content.create`/`update`/`delete`/`purge`/`approveAll`, and a content item's `save`/`approve`/`move`/`duplicate`).
+
+Still allowed: `delete()` and `purge()` (how you remove a mirror), `move()`, `publish()`, and all reads. Detect a mirror via `mirrorOf` (see [Read and update a section](#read-and-update-a-section)).
+
+### Duplicate a branch
+
+Duplicate this section's entire branch under a destination parent. Unlike mirroring, this creates independent copies. The call returns the new branch root as a `SectionItem`.
+
+```typescript
+const copy = await t4.section(236).duplicate(794);
+console.log(copy.id); // the new branch's root section ID
+```
+
+The second argument controls what is copied:
+
+```typescript
+await t4.section(236).duplicate(794, {
+  content: 'duplicate',          // 'ignore' (default, structure only), 'duplicate', or 'mirror'
+  copyPageLayouts: true,          // default true
+  copyUserAccess: true,           // default true
+  copyContentTypeAccess: true,    // default true
+  retainLinkTargets: true,        // keep section/content link targets; default false
+});
+```
+
+`content` chooses how content is handled: `'ignore'` copies structure only, `'duplicate'` copies the content, `'mirror'` mirrors it.
+
+> Duplicating a large branch can take some time — especially with `content: 'duplicate'` — because the server completes the whole copy before responding. The promise resolves when duplication finishes.
+
+> A mirrored section cannot be duplicated — `duplicate()` throws if the source section is a mirror.
 
 ## Navigate the section tree
 
@@ -128,6 +190,28 @@ await children.setOrder([560, 500, 540]);
 If the array omits a child that is present, includes an unknown ID, or repeats one, `setOrder()` throws a descriptive error and makes no changes. T4 has no bulk-order endpoint, so `setOrder()` issues one move request per subsection in sequence.
 
 > Reordering applies to sections ordered manually. It does not override a parent configured to sort its children automatically.
+
+> A mirrored section is read-only, so reordering its children (`setOrder()`/`reorder()`) throws when the parent section is a mirror.
+
+### Find mirror sections
+
+When a section is the source of one or more mirrors, `mirrors()` returns a `SectionRef` for each section that mirrors it:
+
+```typescript
+const mirrors = await t4.section(1413).mirrors();
+for (const ref of mirrors) {
+  const section = await ref.get();
+  console.log(section.id, section.path);
+}
+```
+
+A section can be mirrored to several places, so this is always an array. If the section is not a mirror source, `mirrors()` throws:
+
+```
+Section 1413 is not the source of any mirror (sourceOfMirror is false).
+```
+
+(Detect a source without calling `mirrors()` by reading `sourceOfMirror` — not currently surfaced on `SectionItem`; `mirrors()` checks it internally.)
 
 ### Full tree or subtree
 

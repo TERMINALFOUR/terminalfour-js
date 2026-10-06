@@ -44,6 +44,15 @@ export abstract class OrderedList<T extends { id: number }> extends Array<T> {
    */
   protected abstract moveToIndex(id: number, index: number): Promise<void>;
 
+  /**
+   * Throws when the list's section is read-only (a mirror), so reordering is
+   * blocked. Called after input validation but before any API call. Subclasses
+   * that live in a section override this; the default is a no-op.
+   */
+  protected async assertWritable(): Promise<void> {
+    // Default: writable. Overridden by section-backed lists.
+  }
+
   private get ids(): number[] {
     return this.map((item) => item.id);
   }
@@ -84,6 +93,10 @@ export abstract class OrderedList<T extends { id: number }> extends Array<T> {
         `setOrder must be passed every ${this.entityLabel} ID in ${this.scopeLabel} exactly once (${parts.join('; ')}).`,
       );
     }
+
+    // Blocked if the section is a mirror (read-only). After validation so bad
+    // input still fails fast without a network call.
+    await this.assertWritable();
 
     const byId = new Map(this.map((item) => [item.id, item]));
     for (let i = 0; i < orderedIds.length; i++) {
@@ -155,6 +168,10 @@ export abstract class OrderedList<T extends { id: number }> extends Array<T> {
       }
       targetIndex = options.before !== undefined ? siblingIndex : siblingIndex + 1;
     }
+
+    // Blocked if the section is a mirror (read-only). After validation so bad
+    // input still fails fast without a network call.
+    await this.assertWritable();
 
     await this.moveToIndex(id, targetIndex);
 

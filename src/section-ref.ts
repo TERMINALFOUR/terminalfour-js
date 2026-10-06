@@ -6,7 +6,7 @@ import {
   AddSectionData,
   ApiSectionDTO,
 } from './types.js';
-import { resolveLanguage, mapStatus, flattenGroups, STATUS_CODES, AUTH_LEVEL_MAP, debugWarn, DEFAULT_CACHE_TTL, getCacheEpoch, assertRequired, assertNotEmptyIfPresent } from './utils.js';
+import { resolveLanguage, mapStatus, flattenGroups, STATUS_CODES, AUTH_LEVEL_MAP, debugWarn, DEFAULT_CACHE_TTL, getCacheEpoch, assertRequired, assertNotEmptyIfPresent, assertSectionNotMirrored, cacheSectionMirrorStatus, parseDuplicatedSectionId } from './utils.js';
 import { ContentResource } from './resources/content-resource.js';
 import { SectionItem } from './models/section-item.js';
 import { SubsectionList } from './models/subsection-list.js';
@@ -291,6 +291,7 @@ export class SectionRef {
       method: 'GET',
       path: `/hierarchy/${this.sectionId}/${language}`,
     });
+    assertSectionNotMirrored(this.httpClient, this.sectionId, section);
 
     // Build a mutable map of existing channel entries
     const channelMap = new Map(
@@ -410,6 +411,7 @@ export class SectionRef {
       }),
       this.getMetaTagDefinitions(),
     ]);
+    assertSectionNotMirrored(this.httpClient, this.sectionId, section);
 
     // Start with existing metaDatas
     const existingMetas = [...(section.metaDatas ?? [])];
@@ -516,6 +518,40 @@ export class SectionRef {
     return SubsectionList.create(items, this.httpClient, this.sectionId, language);
   }
 
+  /**
+   * Returns references to the sections that mirror this one.
+   *
+   * Only valid when this section is the source of one or more mirrors
+   * (`sourceOfMirror` is `true`). Throws a clear error otherwise. A single
+   * section can be mirrored to multiple places, so this returns an array.
+   */
+  async mirrors(options?: LanguageOption): Promise<SectionRef[]> {
+    const language = resolveLanguage(options?.language, this.defaultLanguage);
+
+    // Fetch this section first to confirm it is actually a mirror source, so a
+    // non-source section fails fast and clearly rather than hitting the mirrors
+    // endpoint.
+    const section = await this.httpClient.request<ApiSectionDTO>({
+      method: 'GET',
+      path: `/hierarchy/${this.sectionId}/${language}`,
+    });
+
+    if (section.sourceOfMirror !== true) {
+      throw new Error(
+        `Section ${this.sectionId} is not the source of any mirror (sourceOfMirror is false).`,
+      );
+    }
+
+    const mirrors = await this.httpClient.request<ApiSectionDTO[]>({
+      method: 'GET',
+      path: `/hierarchy/${this.sectionId}/mirrors/${language}`,
+    });
+
+    return (mirrors ?? []).map(
+      (m) => new SectionRef(this.httpClient, m.id, this.defaultLanguage, this.mediaCreateFn, this.cache),
+    );
+  }
+
   /** Returns users and groups with edit rights on this section, including inherited rights. */
   async editRights(options?: LanguageOption): Promise<{
     users: Array<{ id: number; username: string; firstName: string; lastName: string; emailAddress: string; inherited: boolean }>;
@@ -589,6 +625,8 @@ export class SectionRef {
       path: `/hierarchy/${this.sectionId}/${language}`,
     });
 
+    assertSectionNotMirrored(this.httpClient, this.sectionId, section);
+
     // Merge new IDs into existing (deduplicated)
     const mergedUsers = data.users
       ? [...new Set([...(section.userIDs ?? []), ...data.users])]
@@ -625,6 +663,8 @@ export class SectionRef {
       method: 'GET',
       path: `/hierarchy/${this.sectionId}/${language}`,
     });
+
+    assertSectionNotMirrored(this.httpClient, this.sectionId, section);
 
     const removeUsers = new Set(data.users ?? []);
     const removeGroups = new Set(data.groups ?? []);
@@ -692,6 +732,8 @@ export class SectionRef {
       path: `/hierarchy/${this.sectionId}/${language}`,
     });
 
+    assertSectionNotMirrored(this.httpClient, this.sectionId, section);
+
     const existing = section.contentTypeScopes ?? [];
 
     // Build a map of existing scopes, then merge in the new ones
@@ -725,6 +767,8 @@ export class SectionRef {
       path: `/hierarchy/${this.sectionId}/${language}`,
     });
 
+    assertSectionNotMirrored(this.httpClient, this.sectionId, section);
+
     const removeSet = new Set(ids);
     const updated = {
       ...section,
@@ -752,6 +796,7 @@ export class SectionRef {
       method: 'GET',
       path: `/hierarchy/${this.sectionId}/${language}`,
     });
+    assertSectionNotMirrored(this.httpClient, this.sectionId, parentSection);
 
     const accessControlType = parentSection.accessControl?.type ?? 0;
     const metaDataTypeId = parentSection.metaData?.type ?? 0;
@@ -851,9 +896,12 @@ export class SectionRef {
     return new SectionItem(childRaw, this.httpClient, language, customFields, this.mediaCreateFn);
   }
 
-  /** Deletes (deactivates) this section by setting its status to inactive. */
+  /**
+   * Deletes (deactivates) this section by setting its status to inactive.
+   * Allowed on mirrored sections — deactivating is how a mirror is removed.
+   */
   async delete(options?: LanguageOption): Promise<void> {
-    await this.update({ status: 'inactive' }, options);
+    await this.update({ status: 'inactive' }, options, true);
   }
 
   /**
@@ -900,6 +948,156 @@ export class SectionRef {
   }
 
   /**
+   * Mirrors this section's entire branch under a destination parent section.
+   *
+   * A mirror is a read-only reflection of the source branch — the mirrored
+   * sections and their content stay in sync with the source and cannot be
+   * edited independently.
+   *
+   * Mirroring must be enabled on the T4 instance; this method checks
+   * `hierarchy.enableMirroringOfSections` first and throws a clear error if it
+   * is disabled, before attempting the operation.
+   *
+   * @param destinationParentId The section the mirror branch is placed under.
+   * @param options.accessControl How access control is handled on the mirror:
+   *   `'ignore'` (default), `'duplicate'`, or `'mirror'`.
+   * @param options.retainLinkTargets Keep section/content link targets pointing
+   *   at the originals rather than the mirrored copies. Defaults to `false`.
+   */
+  async mirror(
+    destinationParentId: number,
+    options?: { accessControl?: 'ignore' | 'duplicate' | 'mirror'; retainLinkTargets?: boolean },
+  ): Promise<void> {
+    if (!Number.isInteger(destinationParentId) || destinationParentId <= 0) {
+      throw new Error(
+        `mirror destination must be a positive section ID, received ${destinationParentId}.`,
+      );
+    }
+
+    // Precondition: mirroring must be enabled on the instance.
+    const enabled = await this.isMirroringEnabled();
+    if (!enabled) {
+      throw new Error(
+        'Section mirroring is not enabled on this T4 instance ' +
+        '(hierarchy.enableMirroringOfSections is not "true"). Enable it in the T4 configuration before mirroring sections.',
+      );
+    }
+
+    const accessControlMap = { ignore: 'IGNORE', duplicate: 'DUPLICATE', mirror: 'MIRROR' } as const;
+    const content = accessControlMap[options?.accessControl ?? 'ignore'];
+
+    const body: { destination: number; content: string; retainLinkTargets?: boolean } = {
+      destination: destinationParentId,
+      content,
+    };
+    if (options?.retainLinkTargets) {
+      body.retainLinkTargets = true;
+    }
+
+    await this.httpClient.request<void>({
+      method: 'LINK',
+      path: `/hierarchy/${this.sectionId}`,
+      body,
+    });
+  }
+
+  /** Returns whether section mirroring is enabled on this T4 instance. */
+  private async isMirroringEnabled(): Promise<boolean> {
+    const config = await this.httpClient.request<{ name: string; type: string; value: string }>({
+      method: 'GET',
+      path: '/config/hierarchy.enableMirroringOfSections',
+    });
+    return config.value === 'true';
+  }
+
+  /**
+   * Duplicates this section's entire branch under a destination parent section,
+   * returning the new branch's root as a {@link SectionItem}.
+   *
+   * This can take a long time for large branches — especially when content is
+   * included (`content: 'duplicate'`) — because the server performs the whole
+   * copy before responding. The call resolves once duplication completes.
+   *
+   * A mirrored section cannot be duplicated; this throws if the source section
+   * is a mirror.
+   *
+   * @param destinationParentId The section the duplicated branch is placed under.
+   * @param options.content How content is handled: `'ignore'` (default, structure
+   *   only), `'duplicate'` (copy content), or `'mirror'` (mirror content).
+   * @param options.copyPageLayouts Copy page layout usage. Defaults to `true`.
+   * @param options.copyUserAccess Copy user access rights. Defaults to `true`.
+   * @param options.copyContentTypeAccess Copy content type access rights. Defaults to `true`.
+   * @param options.retainLinkTargets Keep section/content link targets pointing at
+   *   the originals rather than the duplicated copies. Defaults to `false`.
+   */
+  async duplicate(
+    destinationParentId: number,
+    options?: {
+      content?: 'ignore' | 'duplicate' | 'mirror';
+      copyPageLayouts?: boolean;
+      copyUserAccess?: boolean;
+      copyContentTypeAccess?: boolean;
+      retainLinkTargets?: boolean;
+    },
+    opts?: LanguageOption,
+  ): Promise<SectionItem> {
+    if (!Number.isInteger(destinationParentId) || destinationParentId <= 0) {
+      throw new Error(
+        `duplicate destination must be a positive section ID, received ${destinationParentId}.`,
+      );
+    }
+
+    const language = resolveLanguage(opts?.language, this.defaultLanguage);
+
+    // A mirrored section cannot be duplicated. Fetch the source DTO (also used
+    // by the guard, which caches the status for any later content-path checks).
+    const source = await this.httpClient.request<ApiSectionDTO>({
+      method: 'GET',
+      path: `/hierarchy/${this.sectionId}/${language}`,
+    });
+    assertSectionNotMirrored(this.httpClient, this.sectionId, source);
+
+    const contentMap = { ignore: 'IGNORE', duplicate: 'DUPLICATE', mirror: 'MIRROR' } as const;
+    const body: {
+      destination: number;
+      content: string;
+      pageLayouts: boolean;
+      users: boolean;
+      contentTypes: boolean;
+      retainLinkTargets?: boolean;
+    } = {
+      destination: destinationParentId,
+      content: contentMap[options?.content ?? 'ignore'],
+      pageLayouts: options?.copyPageLayouts ?? true,
+      users: options?.copyUserAccess ?? true,
+      contentTypes: options?.copyContentTypeAccess ?? true,
+    };
+    if (options?.retainLinkTargets) {
+      body.retainLinkTargets = true;
+    }
+
+    // The response is a buffered plain-text progress log (not JSON despite its
+    // content-type) ending in a DUPLICATE_BRANCH_SUCCESS marker, with the new
+    // section ID on a "Duplicated section id: <n>" line. HttpClient returns it
+    // as a string when JSON parsing fails.
+    const responseBody = await this.httpClient.request<string>({
+      method: 'COPY',
+      path: `/hierarchy/${this.sectionId}/${language}`,
+      body,
+    });
+
+    const newSectionId = parseDuplicatedSectionId(responseBody);
+
+    // Fetch the new branch root. This also validates the parsed id — a bad parse
+    // would 404 here rather than returning a bogus SectionItem.
+    const newRaw = await this.httpClient.request<ApiSectionDTO>({
+      method: 'GET',
+      path: `/hierarchy/${newSectionId}/${language}`,
+    });
+    return new SectionItem(newRaw, this.httpClient, language, null, this.mediaCreateFn);
+  }
+
+  /**
    * Updates section properties. Fetches the current section, merges your
    * changes, and PUTs the full body back. Only pass the fields you want to change.
    * Returns the updated SectionItem.
@@ -907,6 +1105,7 @@ export class SectionRef {
   async update(
     data: { name?: string; show?: boolean; status?: 'approved' | 'pending' | 'inactive'; customFields?: Record<string, unknown> },
     options?: LanguageOption,
+    skipMirrorCheck = false,
   ): Promise<SectionItem> {
     // This path PUTs directly (it does not go through SectionItem.save()), so
     // guard the name here. Present-only: omitting name is valid (e.g. delete()
@@ -918,6 +1117,13 @@ export class SectionRef {
       method: 'GET',
       path: `/hierarchy/${this.sectionId}/${language}`,
     });
+    // delete()/purge() unmirror a section, so they skip this guard. Every other
+    // caller of update() is a genuine content modification and is blocked.
+    if (!skipMirrorCheck) {
+      assertSectionNotMirrored(this.httpClient, this.sectionId, section);
+    } else {
+      cacheSectionMirrorStatus(this.httpClient, this.sectionId, section);
+    }
 
     const updated = {
       ...section,

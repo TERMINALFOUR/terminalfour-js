@@ -126,6 +126,8 @@ Both styles are tracked and validated the same way. Every field you assign is pe
 
 `save()` defaults the status to `'pending'` to match T4's approval workflow. Set `item.status = 'approved'` before saving if the item must remain approved.
 
+> Content in a mirrored section is read-only. `create`, `update`, `delete`, `purge`, `approveAll`, and a content item's `save`, `approve`, `move`, and `duplicate` throw an error naming the source section when the section is a mirror. Edit the content in the source section instead.
+
 `save()` resolves every field type the same way `content.create()` and `content.update()` do — including Repeater fields. A repeater is read back as an array of `{ name, fields }` items (see [Values returned on read](#values-returned-on-read)), and you assign the same friendly shape back:
 
 ```typescript
@@ -172,6 +174,8 @@ If the array omits an ID that is in the section, includes an ID that is not, or 
 
 > Reordering applies to content ordered manually. It does not override a section configured to sort its content automatically (for example alphabetically or by date).
 
+> Content in a mirrored section is read-only, so `setOrder()` and `reorder()` throw when the section is a mirror.
+
 ## Approve, duplicate, move, or remove
 
 ### Approve one item
@@ -202,15 +206,18 @@ await item.duplicate(500); // another section: keeps the original name
 
 For duplicates in the same section, the SDK checks existing names and chooses the next available `(n)` suffix.
 
-### Delete, purge, or move
+### Delete, purge, move, or mirror
 
 ```typescript
 await t4.section(482).content.delete(9132); // soft delete
 await t4.section(482).content.purge(9132);  // permanent removal
 
 const item = await t4.section(482).content.get(9132);
-await item.move(500); // move to section 500
+await item.move(500);   // move to section 500
+await item.mirror(500); // mirror into section 500
 ```
+
+Mirroring a content item is not a copy and has no "source": after `item.mirror(500)`, the same item (same ID) exists in both its current section and section 500, and editing it from either section updates both. The target must differ from the item's current section.
 
 ## Element values
 

@@ -2,7 +2,7 @@ import { ContentDTO } from '../types.js';
 import { HttpClient } from '../http-client.js';
 import { ElementResolver, TemplateElement, ResolveContext, RepeaterInput } from '../element-resolver.js';
 import { TypeRegistry } from '../type-registry.js';
-import { formatFileSize, parseElementKey, mapStatus, flattenGroups, STATUS_CODES, AUTH_LEVEL_MAP, debugWarn, DEFAULT_CACHE_TTL, getCacheEpoch, assertRequired } from '../utils.js';
+import { formatFileSize, parseElementKey, mapStatus, flattenGroups, STATUS_CODES, AUTH_LEVEL_MAP, debugWarn, DEFAULT_CACHE_TTL, getCacheEpoch, assertRequired, assertSectionNotMirroredCached } from '../utils.js';
 
 /** Symbol used to restrict _init() access to the factory function in this module */
 const INIT = Symbol('ContentItem.init');
@@ -732,6 +732,8 @@ export class ContentItem {
    */
   async save(): Promise<void> {
     assertRequired(this.name, 'Content name');
+    // Content in a mirrored section is read-only.
+    await assertSectionNotMirroredCached(this._httpClient, this._sectionId, this.language);
 
     // Start from the original raw elements (correct API format)
     const rawElements = { ...this._rawDTO.elements };
@@ -896,6 +898,9 @@ export class ContentItem {
    * - If `sectionId` is provided, duplicates into that section with the original name.
    */
   async duplicate(sectionId?: number): Promise<void> {
+    // Content in a mirrored section is read-only; duplicating it is blocked.
+    await assertSectionNotMirroredCached(this._httpClient, this._sectionId, this.language);
+
     const destination = sectionId ?? this._sectionId;
     const sameSection = destination === this._sectionId;
 
@@ -942,12 +947,47 @@ export class ContentItem {
    * Moves this content item to a different section.
    */
   async move(sectionId: number): Promise<void> {
+    // Content in a mirrored section is read-only; moving it out is blocked.
+    await assertSectionNotMirroredCached(this._httpClient, this._sectionId, this.language);
     await this._httpClient.request<void>({
       method: 'MOVE',
       path: `/content/${this.language}`,
       body: {
         source: this._sectionId,
         destination: sectionId,
+        contents: { [this.id]: [] },
+      },
+    });
+  }
+
+  /**
+   * Mirrors this content item into another section.
+   *
+   * Unlike a mirrored section, a mirrored content item has no "source": the same
+   * item (with the same ID) then exists in both this section and the target, and
+   * editing it from either section updates both.
+   *
+   * @param targetSectionId The section to mirror this item into.
+   */
+  async mirror(targetSectionId: number): Promise<void> {
+    if (!Number.isInteger(targetSectionId) || targetSectionId <= 0) {
+      throw new Error(
+        `mirror target must be a positive section ID, received ${targetSectionId}.`,
+      );
+    }
+    if (targetSectionId === this._sectionId) {
+      throw new Error(
+        `Cannot mirror content ${this.id} into section ${targetSectionId}: it already lives there.`,
+      );
+    }
+    // Content in a mirrored section is read-only; mirroring it elsewhere is blocked.
+    await assertSectionNotMirroredCached(this._httpClient, this._sectionId, this.language);
+    await this._httpClient.request<void>({
+      method: 'LINK',
+      path: `/content/${this.language}`,
+      body: {
+        source: this._sectionId,
+        destination: targetSectionId,
         contents: { [this.id]: [] },
       },
     });
