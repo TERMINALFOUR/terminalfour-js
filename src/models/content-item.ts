@@ -564,7 +564,15 @@ export class ContentItem {
   reviewDate: Date | null;
   /** Section ID where expired content is archived. `null` if not set. */
   archiveSection: number | null;
-  /** Resolved fields with friendly names. Not present on summary items from `content.list()`. */
+  /**
+   * Resolved fields with friendly names. Not present on summary items from `content.list()`.
+   *
+   * Backed by a dirty-tracking Proxy (see `_wrapFields`). Both property-level
+   * mutation (`item.fields.Title = '...'`) and wholesale replacement
+   * (`item.fields = { ... }`) mark the touched fields dirty so `save()`
+   * validates and persists them. The accessor itself is installed per-instance
+   * in `_init()` (see `_defineFieldsAccessor`); summary items leave it undefined.
+   */
   fields!: Record<string, unknown>;
 
   private readonly _httpClient: HttpClient;
@@ -578,6 +586,9 @@ export class ContentItem {
   private _statusDirty = false;
 
   private _dirtyFields: Set<string> = new Set();
+
+  /** Backing store for the `fields` accessor — holds the dirty-tracking Proxy. */
+  private _fields: Record<string, unknown> = {};
 
   get status(): string { return this._status; }
   set status(value: string) {
@@ -626,6 +637,47 @@ export class ContentItem {
     Object.defineProperty(this, '_statusDirty', { value: false, enumerable: false, writable: true });
     Object.defineProperty(this, '_keyMap', { value: new Map(), enumerable: false, writable: true });
     Object.defineProperty(this, '_dirtyFields', { value: new Set(), enumerable: false, writable: true });
+    Object.defineProperty(this, '_fields', { value: {}, enumerable: false, writable: true });
+  }
+
+  /**
+   * Wraps a plain fields object in the dirty-tracking Proxy. Every property the
+   * developer sets is recorded in `_dirtyFields` so `save()` re-resolves and
+   * validates only the touched fields. Used by both `_init()` and `save()` (on
+   * reload) and by the `fields` setter when a whole new object is assigned.
+   */
+  private _wrapFields(obj: Record<string, unknown>): Record<string, unknown> {
+    return new Proxy(obj, {
+      set: (target, prop, value) => {
+        if (typeof prop === 'string') {
+          this._dirtyFields.add(prop);
+        }
+        target[prop as string] = value;
+        return true;
+      },
+    });
+  }
+
+  /**
+   * Installs the enumerable `fields` accessor on this instance. The getter
+   * returns the dirty-tracking Proxy; the setter supports assigning a whole new
+   * fields object — it wraps the replacement in the same Proxy and marks every
+   * assigned key dirty, so `save()` validates and persists each one (unknown
+   * fields throw, exactly as property-level mutation does). Only called for
+   * full items; summary items leave `fields` undefined.
+   */
+  private _defineFieldsAccessor(): void {
+    Object.defineProperty(this, 'fields', {
+      enumerable: true,
+      configurable: true,
+      get: () => this._fields,
+      set: (value: Record<string, unknown>) => {
+        this._fields = this._wrapFields(value ?? {});
+        for (const key of Object.keys(this._fields)) {
+          this._dirtyFields.add(key);
+        }
+      },
+    });
   }
 
   /** Includes getter-based properties (status) in JSON serialisation. */
@@ -658,20 +710,16 @@ export class ContentItem {
       this.id,
       String(data.version),
     );
-    this.fields = parsed.fields;
     this._keyMap = parsed.keyMap;
     this._dirtyFields = new Set();
 
-    // Wrap fields in a Proxy to track which fields the developer modifies
-    this.fields = new Proxy(this.fields, {
-      set: (target, prop, value) => {
-        if (typeof prop === 'string') {
-          this._dirtyFields.add(prop);
-        }
-        target[prop as string] = value;
-        return true;
-      },
-    });
+    // Remove the plain placeholder property set in the constructor, then install
+    // the dirty-tracking accessor so both property-level mutation and wholesale
+    // replacement are tracked.
+    delete (this as Partial<ContentItem>).fields;
+    this._defineFieldsAccessor();
+    // Wrap fields in a Proxy to track which fields the developer modifies.
+    this._fields = this._wrapFields(parsed.fields);
   }
 
   /**
@@ -819,20 +867,12 @@ export class ContentItem {
       response.id,
       String(response.version),
     );
-    this.fields = parsed.fields;
     this._keyMap = parsed.keyMap;
     this._dirtyFields = new Set();
 
-    // Re-wrap fields in Proxy for dirty tracking
-    this.fields = new Proxy(this.fields, {
-      set: (target, prop, value) => {
-        if (typeof prop === 'string') {
-          this._dirtyFields.add(prop);
-        }
-        target[prop as string] = value;
-        return true;
-      },
-    });
+    // Re-wrap fields in Proxy for dirty tracking. The accessor was already
+    // installed in _init(); just refresh the backing store.
+    this._fields = this._wrapFields(parsed.fields);
   }
 
   /**
