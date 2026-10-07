@@ -10,7 +10,7 @@ import {
 } from '../src/version.js';
 
 describe('buildUserAgent', () => {
-  it('returns the SDK product token with version when no suffix is given', () => {
+  it('returns the SDK product token with version when no identifier is given', () => {
     expect(buildUserAgent('1.2.0')).toBe('Terminalfour-JS-SDK/1.2.0');
   });
 

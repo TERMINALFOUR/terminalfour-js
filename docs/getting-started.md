@@ -29,7 +29,7 @@ const t4 = new T4Client({
 | `apiToken` | `string` | required | API authentication token |
 | `language` | `string` | `'en'` | Default language for supported operations |
 | `concurrency` | `number` | `10` | Maximum parallel HTTP requests |
-| `userAgent` | `string` | — | Identifier appended to the SDK's `User-Agent` header |
+| `userAgent` | `string` | — | Identifier prepended to the SDK's `User-Agent` header |
 
 ### `baseUrl` requirements
 
