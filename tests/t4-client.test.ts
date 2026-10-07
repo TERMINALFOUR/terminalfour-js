@@ -127,10 +127,10 @@ describe('T4Client', () => {
       expect(userAgentOf(client)).toMatch(/^Terminalfour-JS-SDK\/\d+\.\d+\.\d+/);
     });
 
-    it('appends a custom userAgent suffix after the SDK default', () => {
+    it('prepends a custom userAgent before the SDK default', () => {
       const client = new T4Client({ ...validConfig, userAgent: 'MyCustomApplication/1.0.1' });
       const ua = userAgentOf(client);
-      expect(ua).toMatch(/^Terminalfour-JS-SDK\/\d+\.\d+\.\d+ MyCustomApplication\/1\.0\.1$/);
+      expect(ua).toMatch(/^MyCustomApplication\/1\.0\.1 Terminalfour-JS-SDK\/\d+\.\d+\.\d+$/);
     });
 
     it('ignores a blank userAgent suffix', () => {

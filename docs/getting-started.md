@@ -118,7 +118,7 @@ User-Agent: Terminalfour-JS-SDK/1.1.1
 
 The version is read from the SDK's `package.json` at runtime, so it always matches the installed release — nothing to update by hand.
 
-To attribute traffic to a particular downstream application, pass a `userAgent`. It is **appended** to the SDK default (separated by a single space), never a replacement — the SDK identity and version always stay present for diagnostics:
+To attribute traffic to a particular downstream application, pass a `userAgent`. It is **prepended** before the SDK default (separated by a single space), never a replacement. Your application leads, so logs identify the application first and the SDK second, while the SDK identity and version always stay present for diagnostics:
 
 ```typescript
 const t4 = new T4Client({
@@ -128,7 +128,7 @@ const t4 = new T4Client({
 });
 
 // Resulting header:
-// User-Agent: Terminalfour-JS-SDK/1.1.1 MyCustomApplication/1.0.1
+// User-Agent: MyCustomApplication/1.0.1 Terminalfour-JS-SDK/1.1.1
 ```
 
 Follow the usual `User-Agent` convention of whitespace-separated `product/version` tokens. Blank or whitespace-only values are ignored, leaving just the SDK default. The header applies to every request, including multipart media uploads, and cannot be overridden per request.

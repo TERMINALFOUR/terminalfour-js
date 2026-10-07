@@ -12,15 +12,17 @@ export const UNKNOWN_VERSION = 'unknown';
  * Builds the SDK User-Agent string.
  *
  * The SDK's own product token (`Terminalfour-JS-SDK/<version>`) is always
- * present and comes first. An optional caller-supplied identifier is appended
- * as a suffix, separated by a single space, following the RFC 9110 convention
- * of whitespace-separated product tokens. Blank or whitespace-only suffixes are
- * ignored so only the default remains.
+ * present. An optional caller-supplied identifier is **prepended** before it,
+ * separated by a single space, following the RFC 9110 convention of
+ * whitespace-separated product tokens. The caller's application identity leads
+ * so that, in server logs, the application making the request is read first and
+ * the SDK ("how" it's making the request) second. Blank or whitespace-only
+ * values are ignored so only the SDK default remains.
  */
-export function buildUserAgent(version: string, suffix?: string): string {
+export function buildUserAgent(version: string, prefix?: string): string {
   const base = `${SDK_PRODUCT}/${version}`;
-  const trimmed = suffix?.trim();
-  return trimmed ? `${base} ${trimmed}` : base;
+  const trimmed = prefix?.trim();
+  return trimmed ? `${trimmed} ${base}` : base;
 }
 
 /**

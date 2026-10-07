@@ -18,27 +18,27 @@ describe('buildUserAgent', () => {
     expect(buildUserAgent('9.9.9')).toBe(`${SDK_PRODUCT}/9.9.9`);
   });
 
-  it('appends a custom suffix separated by a single space', () => {
+  it('prepends a custom identifier before the SDK token, separated by a single space', () => {
     expect(buildUserAgent('1.2.0', 'MyCustomApplication/1.0.1')).toBe(
-      'Terminalfour-JS-SDK/1.2.0 MyCustomApplication/1.0.1',
+      'MyCustomApplication/1.0.1 Terminalfour-JS-SDK/1.2.0',
     );
   });
 
-  it('ignores an undefined suffix', () => {
+  it('ignores an undefined identifier', () => {
     expect(buildUserAgent('1.2.0', undefined)).toBe('Terminalfour-JS-SDK/1.2.0');
   });
 
-  it('ignores an empty-string suffix', () => {
+  it('ignores an empty-string identifier', () => {
     expect(buildUserAgent('1.2.0', '')).toBe('Terminalfour-JS-SDK/1.2.0');
   });
 
-  it('ignores a whitespace-only suffix', () => {
+  it('ignores a whitespace-only identifier', () => {
     expect(buildUserAgent('1.2.0', '   ')).toBe('Terminalfour-JS-SDK/1.2.0');
   });
 
-  it('trims surrounding whitespace from a suffix', () => {
+  it('trims surrounding whitespace from the identifier', () => {
     expect(buildUserAgent('1.2.0', '  MyApp/2.0  ')).toBe(
-      'Terminalfour-JS-SDK/1.2.0 MyApp/2.0',
+      'MyApp/2.0 Terminalfour-JS-SDK/1.2.0',
     );
   });
 });
