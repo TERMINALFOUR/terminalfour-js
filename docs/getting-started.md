@@ -29,6 +29,7 @@ const t4 = new T4Client({
 | `apiToken` | `string` | required | API authentication token |
 | `language` | `string` | `'en'` | Default language for supported operations |
 | `concurrency` | `number` | `10` | Maximum parallel HTTP requests |
+| `userAgent` | `string` | — | Identifier prepended to the SDK's `User-Agent` header |
 
 ### `baseUrl` requirements
 
@@ -106,6 +107,31 @@ Other resources use fixed languages:
 | Media items | `smxx` (language-independent) |
 | Media categories and media library | `en` |
 | Page layouts, content layouts, channels, groups, and users | `en` |
+
+## Identify your traffic with a User-Agent
+
+Every request the SDK makes carries a `User-Agent` header identifying the SDK and its version, so your T4 instance's access logs can distinguish SDK traffic from other API consumers and attribute it to a specific SDK release:
+
+```
+User-Agent: Terminalfour-JS-SDK/1.1.1
+```
+
+The version is read from the SDK's `package.json` at runtime, so it always matches the installed release — nothing to update by hand.
+
+To attribute traffic to a particular downstream application, pass a `userAgent`. It is **prepended** before the SDK default (separated by a single space), never a replacement. Your application leads, so logs identify the application first and the SDK second, while the SDK identity and version always stay present for diagnostics:
+
+```typescript
+const t4 = new T4Client({
+  baseUrl: 'https://mysite.edu/terminalfour/rs',
+  apiToken: 'your-api-token',
+  userAgent: 'MyCustomApplication/1.0.1',
+});
+
+// Resulting header:
+// User-Agent: MyCustomApplication/1.0.1 Terminalfour-JS-SDK/1.1.1
+```
+
+Follow the usual `User-Agent` convention of whitespace-separated `product/version` tokens. Blank or whitespace-only values are ignored, leaving just the SDK default. The header applies to every request, including multipart media uploads, and cannot be overridden per request.
 
 ## Inspect the T4 instance
 

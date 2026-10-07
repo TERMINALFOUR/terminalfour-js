@@ -64,6 +64,45 @@ describe('HttpClient', () => {
     expect(callArgs[1].body).toBe(JSON.stringify(body));
   });
 
+  it('sets the default SDK User-Agent header when one is provided', async () => {
+    const uaClient = new HttpClient(baseUrl, apiToken, undefined, 'Terminalfour-JS-SDK/1.2.0');
+    mockFetchOk({});
+    await uaClient.request({ method: 'GET', path: '/test' });
+    const callArgs = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect(callArgs[1].headers['User-Agent']).toBe('Terminalfour-JS-SDK/1.2.0');
+  });
+
+  it('does not set a User-Agent header when none is provided', async () => {
+    mockFetchOk({});
+    await client.request({ method: 'GET', path: '/test' });
+    const callArgs = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect(callArgs[1].headers['User-Agent']).toBeUndefined();
+  });
+
+  it('applies the SDK User-Agent to multipart upload requests', async () => {
+    const uaClient = new HttpClient(baseUrl, apiToken, undefined, 'Terminalfour-JS-SDK/1.2.0');
+    mockFetchOk({});
+    const formData = new FormData();
+    formData.append('file', 'data');
+    await uaClient.request({ method: 'POST', path: '/upload', multipart: true, formData });
+    const callArgs = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect(callArgs[1].headers['User-Agent']).toBe('Terminalfour-JS-SDK/1.2.0');
+    // Content-Type must still be left to the runtime for multipart
+    expect(callArgs[1].headers['Content-Type']).toBeUndefined();
+  });
+
+  it('does not allow a per-request header to override the SDK User-Agent', async () => {
+    const uaClient = new HttpClient(baseUrl, apiToken, undefined, 'Terminalfour-JS-SDK/1.2.0');
+    mockFetchOk({});
+    await uaClient.request({
+      method: 'GET',
+      path: '/test',
+      headers: { 'User-Agent': 'Sneaky/9.9' },
+    });
+    const callArgs = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect(callArgs[1].headers['User-Agent']).toBe('Terminalfour-JS-SDK/1.2.0');
+  });
+
   it('passes FormData directly for multipart without Content-Type header', async () => {
     mockFetchOk({});
     const formData = new FormData();
