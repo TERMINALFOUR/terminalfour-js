@@ -273,15 +273,22 @@ export function assertNotEmptyIfPresent(value: string | null | undefined, label:
  * The T4 API reports a section's content/subsection sort type as a number
  * (`sortType` in the list response). `0` is the manual/normal sort — the only
  * one that honours an explicit order. Any other value is an automatic sort
- * (alphabetical, by date, etc.), where the server re-sorts on its own and would
- * silently ignore a manual reorder.
+ * (e.g. `10` = alphabetical A–Z, others for date, etc.), where the server
+ * sorts the children itself.
+ *
+ * Verified against a live instance: the bulk reorder endpoint returns a 500 for
+ * an auto-sorted section regardless of the payload — even when some items are
+ * "pinned" to the top/bottom with a manual sequence (a T4 feature that lets a
+ * few items sit outside the automatic sort). Pinned-item ordering is managed
+ * elsewhere in T4, not through this reorder endpoint, so this guard refuses the
+ * whole operation and turns an opaque 500 into a clear message.
  */
 export const MANUAL_SORT_TYPE = 0;
 
 /**
  * Asserts that a section's children are manually sorted, so a reorder will be
  * honoured. Throws when the section uses an automatic sort, rather than letting
- * the SDK report a success for an order the server will ignore or reject.
+ * the request fail with an opaque server 500.
  *
  * @param sortType the `sortType` from the content/subsection list response
  * @param entityLabel noun for the error message, e.g. `'content'` / `'section'`
@@ -291,8 +298,10 @@ export function assertManualSortType(sortType: number, entityLabel: string, sect
   if (sortType !== MANUAL_SORT_TYPE) {
     throw new Error(
       `Cannot reorder ${entityLabel} in section ${sectionId}: it uses an automatic sort ` +
-      `(sortType ${sortType}), so a manual order would be ignored. Switch the section to ` +
-      `manual sorting in Terminalfour before reordering.`,
+      `(sortType ${sortType}), which Terminalfour does not allow reordering through the API — ` +
+      `the server rejects it. This holds even if some items are pinned to the top or bottom; ` +
+      `pinned-item ordering is managed in the Terminalfour UI. Switch the section to manual ` +
+      `sorting if you need to reorder it from the SDK.`,
     );
   }
 }

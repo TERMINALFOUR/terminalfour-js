@@ -127,7 +127,7 @@ await children.setOrder([560, 500, 540]);
 
 If the array omits a child that is present, includes an unknown ID, or repeats one, `setOrder()` throws a descriptive error and makes no changes. Both `setOrder()` and `reorder()` persist the full order in a single bulk request, so the change is applied atomically — a failure can't leave the section half reordered.
 
-> Reordering only applies to a parent that sorts its children manually. If the parent is configured to sort automatically (alphabetically, by date, etc.), `reorder()` and `setOrder()` throw rather than silently doing nothing — switch the parent to manual sorting in Terminalfour first.
+> Reordering only applies to a parent that sorts its children manually. If the parent is configured to sort automatically (alphabetically, by date, etc.), `reorder()` and `setOrder()` throw rather than silently doing nothing — switch the parent to manual sorting in Terminalfour first. This holds even when a few children are pinned to the top or bottom outside the automatic sort; Terminalfour does not allow reordering an auto-sorted parent through the API.
 >
 > The list reflects the children in the requested language. For a parent that mixes languages, reorder one language at a time.
 

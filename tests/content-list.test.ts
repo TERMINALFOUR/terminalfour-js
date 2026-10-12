@@ -252,8 +252,10 @@ describe('ContentList', () => {
       (http.request as ReturnType<typeof vi.fn>).mockImplementation(
         async (opts: { method: string; path: string }) => {
           if (opts.method === 'GET' && opts.path.includes('/contents')) {
-            // sortType 1 = an automatic sort (e.g. alphabetical)
-            return contentsResponse(DEFAULT_ITEMS, 1);
+            // sortType 10 = alphabetical A–Z (as observed on a live section with
+            // three items pinned to the top). The server rejects a reorder PUT
+            // here with a 500, so the SDK must refuse before sending.
+            return contentsResponse(DEFAULT_ITEMS, 10);
           }
           if (opts.method === 'PUT' && /\/contents$/.test(opts.path)) {
             return undefined;
@@ -267,9 +269,14 @@ describe('ContentList', () => {
       const list = await resource.list();
       (http.request as ReturnType<typeof vi.fn>).mockClear();
       await expect(list.reorder(11924, { position: 1 })).rejects.toThrow(
-        /automatic sort \(sortType 1\)/,
+        /automatic sort \(sortType 10\)/,
       );
       expect(bulkCalls(http)).toHaveLength(0);
+    });
+
+    it('the refusal mentions pinned items so it is not mistaken for a bug', async () => {
+      const list = await resource.list();
+      await expect(list.reorder(11924, { position: 1 })).rejects.toThrow(/pinned/);
     });
 
     it('setOrder() refuses with a clear message and makes no PUT', async () => {

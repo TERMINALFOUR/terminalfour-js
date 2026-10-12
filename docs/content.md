@@ -171,6 +171,8 @@ await items.setOrder([9150, 9132, 9140]);
 If the array omits an ID that is in the section, includes an ID that is not, or repeats an ID, `setOrder()` throws a descriptive error and makes no changes. Both `setOrder()` and `reorder()` persist the full order in a single bulk request, so the change is applied atomically — a failure can't leave the section half reordered.
 
 > Reordering only applies to a section that sorts its content manually. If the section is configured to sort automatically (for example alphabetically or by date), `reorder()` and `setOrder()` throw rather than silently doing nothing — switch the section to manual sorting in Terminalfour first.
+>
+> This applies even when a section pins a few items to the top or bottom (Terminalfour lets you exclude some items from the automatic sort and order them manually). Terminalfour does not allow reordering an auto-sorted section through the API at all — pinned-item ordering is managed in the Terminalfour UI — so the SDK refuses the whole operation rather than failing with an opaque server error.
 
 ## Approve, duplicate, move, or remove
 
