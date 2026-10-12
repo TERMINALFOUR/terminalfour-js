@@ -267,66 +267,6 @@ export function assertNotEmptyIfPresent(value: string | null | undefined, label:
   }
 }
 
-/**
- * The sort type of a section's children that permits a manual display order.
- *
- * The T4 API reports a section's content/subsection sort type as a number
- * (`sortType` in the list response). `0` is the manual/normal sort — the only
- * one that honours an explicit order. Any other value is an automatic sort
- * (e.g. `10` = alphabetical A–Z, others for date, etc.), where the server
- * sorts the children itself.
- *
- * Verified against a live instance: the bulk reorder endpoint returns a 500 for
- * an auto-sorted section regardless of the payload — even when some items are
- * "pinned" to the top/bottom with a manual sequence (a T4 feature that lets a
- * few items sit outside the automatic sort). Pinned-item ordering is managed
- * elsewhere in T4, not through this reorder endpoint, so this guard refuses the
- * whole operation and turns an opaque 500 into a clear message.
- */
-export const MANUAL_SORT_TYPE = 0;
-
-/**
- * Human-readable names for the automatic `sortType` values T4 can set on a
- * section. `0` (manual) is intentionally absent — it is handled separately as
- * the only reorderable case. Used only to make the "can't reorder" error
- * message legible; an unrecognised value degrades to the bare number.
- */
-const SORT_TYPE_NAMES: Record<number, string> = {
-  10: 'Alphabetical (A–Z)',
-  20: 'Alphabetical (Z–A)',
-  30: 'Last updated (newest first)',
-  40: 'Last updated (oldest first)',
-  50: 'Publish date (newest first)',
-  60: 'Publish date (oldest first)',
-};
-
-/** Describes a sortType for an error message: `"Alphabetical (A–Z)" (sortType 10)`. */
-function describeSortType(sortType: number): string {
-  const name = SORT_TYPE_NAMES[sortType];
-  return name ? `"${name}" (sortType ${sortType})` : `sortType ${sortType}`;
-}
-
-/**
- * Asserts that a section's children are manually sorted, so a reorder will be
- * honoured. Throws when the section uses an automatic sort, rather than letting
- * the request fail with an opaque server 500.
- *
- * @param sortType the `sortType` from the content/subsection list response
- * @param entityLabel noun for the error message, e.g. `'content'` / `'section'`
- * @param sectionId the section whose children are being reordered
- */
-export function assertManualSortType(sortType: number, entityLabel: string, sectionId: number): void {
-  if (sortType !== MANUAL_SORT_TYPE) {
-    throw new Error(
-      `Cannot reorder ${entityLabel} in section ${sectionId}: it uses an automatic sort ` +
-      `(${describeSortType(sortType)}), which Terminalfour does not allow reordering through ` +
-      `the API — the server rejects it. This holds even if some items are pinned to the top or ` +
-      `bottom; pinned-item ordering is managed in the Terminalfour UI. Switch the section to ` +
-      `manual sorting if you need to reorder it from the SDK.`,
-    );
-  }
-}
-
 
 /** Accepted file input: a file path, URL, Blob, ReadableStream, or { file, filename } object */
 export type FileInput = string | Blob | NodeJS.ReadableStream | { file: string | Blob | NodeJS.ReadableStream; filename?: string };

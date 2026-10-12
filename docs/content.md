@@ -168,11 +168,9 @@ const items = await t4.section(482).content.list();
 await items.setOrder([9150, 9132, 9140]);
 ```
 
-If the array omits an ID that is in the section, includes an ID that is not, or repeats an ID, `setOrder()` throws a descriptive error and makes no changes. Both `setOrder()` and `reorder()` persist the full order in a single bulk request, so the change is applied atomically — a failure can't leave the section half reordered.
+If the array omits an ID that is in the section, includes an ID that is not, or repeats an ID, `setOrder()` throws a descriptive error and makes no changes. `reorder()` sends one move request; `setOrder()` sends one move per item in sequence, so it is **not atomic** — if a move fails partway, earlier moves have already applied (the in-memory order reflects only the moves that succeeded).
 
-> Reordering only applies to a section that sorts its content manually. If the section is configured to sort automatically (for example alphabetically or by date), `reorder()` and `setOrder()` throw rather than silently doing nothing — switch the section to manual sorting in Terminalfour first.
->
-> This applies even when a section pins a few items to the top or bottom (Terminalfour lets you exclude some items from the automatic sort and order them manually). Terminalfour does not allow reordering an auto-sorted section through the API at all — pinned-item ordering is managed in the Terminalfour UI — so the SDK refuses the whole operation rather than failing with an opaque server error.
+> **Auto-sorted sections and pinned items.** A section can sort its content automatically (alphabetically, by date). You can still "pin" a few items to the top or bottom and order those manually. The SDK lets you reorder pinned items and content in manually-sorted sections. If you try to move an item the section won't allow (a non-pinned item in an auto-sorted section, or a pinned item outside its block), Terminalfour rejects it and the SDK throws a clear error explaining why.
 
 ## Approve, duplicate, move, or remove
 

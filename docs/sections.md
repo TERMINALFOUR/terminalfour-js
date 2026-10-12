@@ -125,9 +125,9 @@ const children = await t4.section(233).subsections();
 await children.setOrder([560, 500, 540]);
 ```
 
-If the array omits a child that is present, includes an unknown ID, or repeats one, `setOrder()` throws a descriptive error and makes no changes. Both `setOrder()` and `reorder()` persist the full order in a single bulk request, so the change is applied atomically — a failure can't leave the section half reordered.
+If the array omits a child that is present, includes an unknown ID, or repeats one, `setOrder()` throws a descriptive error and makes no changes. `reorder()` sends one move request; `setOrder()` sends one move per child in sequence, so it is **not atomic** — a mid-sequence failure leaves earlier moves applied.
 
-> Reordering only applies to a parent that sorts its children manually. If the parent is configured to sort automatically (alphabetically, by date, etc.), `reorder()` and `setOrder()` throw rather than silently doing nothing — switch the parent to manual sorting in Terminalfour first. This holds even when a few children are pinned to the top or bottom outside the automatic sort; Terminalfour does not allow reordering an auto-sorted parent through the API.
+> **Auto-sorted parents and pinned children.** A parent can sort its children automatically (alphabetically, by date). You can still pin a few children to the top or bottom and order those manually. The SDK lets you reorder pinned children and children of manually-sorted parents. If you try a move the parent won't allow (a non-pinned child in an auto-sorted parent, or a pinned child outside its block), Terminalfour rejects it and the SDK throws a clear error.
 >
 > The list reflects the children in the requested language. For a parent that mixes languages, reorder one language at a time.
 

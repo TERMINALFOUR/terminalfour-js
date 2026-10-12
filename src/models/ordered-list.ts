@@ -1,3 +1,5 @@
+import { T4ApiError } from '../errors.js';
+
 /**
  * Options for {@link OrderedList.reorder}. Exactly one property must be provided.
  */
@@ -21,25 +23,30 @@ export interface ReorderOptions {
  * Subclasses supply:
  * - the entity label used in error messages (`entityLabel`),
  * - a human-readable scope for errors (`scopeLabel`, e.g. `section 236`),
- * - the bulk reorder request (`persistOrder`).
+ * - the single-item move request (`moveToIndex`).
  *
  * Each T must expose a numeric `id`.
  *
- * ## Ordering is a single atomic request
+ * ## Write path: one PUT per moved item
  *
- * Both `setOrder` and `reorder` compute the full desired order and persist it
- * with ONE bulk PUT (`persistOrder`). The T4 API applies the whole list in a
- * single transaction, so a partial failure can't leave the section half
- * reordered. (The older per-item index endpoint is not used — it is not
- * transactional and is unreliable on some server versions.)
+ * T4's reorder endpoint moves a single item at a time:
+ * `PUT /hierarchy/{id}/{lang}/{contents|subsections}/{itemId}/index` with
+ * `{ id, index }` (0-based). `reorder` sends one such request; `setOrder`
+ * sends one per item at ascending indices. There is no working bulk endpoint
+ * on the server versions tested (a bulk `…/contents` PUT returns 500), so
+ * `setOrder` is a sequence of single-item moves and is therefore **not
+ * atomic**: if one move fails midway, earlier moves have already applied. The
+ * in-memory order is only updated for moves that succeed.
  *
- * ## Auto-sorted sections
+ * ## Auto-sorted sections and pinned items
  *
- * A section whose children are automatically sorted (alphabetical, by date,
- * etc.) ignores a manual order: the server would silently re-sort, so a reorder
- * is a no-op or an error. Subclasses that know the section's sort type override
- * {@link assertManuallySorted} to refuse reordering with a clear message rather
- * than reporting a success that didn't happen.
+ * A section can sort its children automatically (alphabetical, by date). Such
+ * a section still lets a few items be "pinned" to the top or bottom and ordered
+ * manually. The SDK does not try to predict which moves are allowed: it sends
+ * the move and, if the server rejects it (`417 invalid_index_collection` —
+ * e.g. moving an auto-sorted item, or moving a pinned item outside its block),
+ * rethrows a clear error via {@link describeReorderRejection}. Pinned-item
+ * reorders, and reorders in fully-manual sections, go through unchanged.
  */
 export abstract class OrderedList<T extends { id: number }> extends Array<T> {
   // Derived arrays (map/filter/slice/etc.) are plain Arrays — the subclass
@@ -55,11 +62,10 @@ export abstract class OrderedList<T extends { id: number }> extends Array<T> {
   protected abstract readonly scopeLabel: string;
 
   /**
-   * Persists a complete new order to the API in a single request. `orderedIds`
-   * is the full set of IDs in this list, in the desired order. Subclasses
-   * implement the specific bulk endpoint.
+   * Persists a single move to the API: place `id` at the 0-based `index`.
+   * Subclasses implement the specific endpoint.
    */
-  protected abstract persistOrder(orderedIds: number[]): Promise<void>;
+  protected abstract moveToIndex(id: number, index: number): Promise<void>;
 
   /**
    * Throws when the list's section is read-only (a mirror), so reordering is
@@ -70,18 +76,32 @@ export abstract class OrderedList<T extends { id: number }> extends Array<T> {
     // Default: writable. Overridden by section-backed lists.
   }
 
-  /**
-   * Throws when the section is not manually sorted, so a manual order would be
-   * ignored by the server. Called after input validation but before any API
-   * call. Subclasses that know the section's sort type override this; the
-   * default is a no-op.
-   */
-  protected async assertManuallySorted(): Promise<void> {
-    // Default: assume manual. Overridden by section-backed lists.
-  }
-
   private get ids(): number[] {
     return this.map((item) => item.id);
+  }
+
+  /**
+   * Wraps the single-item move, turning the server's "this move isn't allowed"
+   * rejection into a clear, actionable error. T4 answers `417` with
+   * `invalid_index_collection` when the target index is not permitted — the
+   * common cause is an auto-sorted section (the item is not pinned, or a pinned
+   * item was moved outside its top/bottom block). Other errors pass through.
+   */
+  private async move(id: number, index: number): Promise<void> {
+    try {
+      await this.moveToIndex(id, index);
+    } catch (error) {
+      if (error instanceof T4ApiError && isInvalidIndexCollection(error)) {
+        throw new Error(
+          `Terminalfour rejected moving ${this.entityLabel} ${id} to position ${index + 1} in ` +
+          `${this.scopeLabel}. This usually means the section is sorted automatically and the ` +
+          `item is not pinned, or a pinned item was moved outside its top/bottom block — only ` +
+          `pinned items can be ordered in an auto-sorted section. (Server: invalid_index_collection.)`,
+          { cause: error },
+        );
+      }
+      throw error;
+    }
   }
 
   /**
@@ -91,8 +111,9 @@ export abstract class OrderedList<T extends { id: number }> extends Array<T> {
    * more, no fewer, no duplicates. Throws a descriptive error otherwise and
    * makes no API calls.
    *
-   * Persists the new order in a single bulk request and updates this array's
-   * in-memory order to match.
+   * Persists the order as one move per item at ascending indices, then updates
+   * this array's in-memory order to match. Not atomic (see the class note): a
+   * mid-sequence failure leaves earlier moves applied.
    */
   async setOrder(orderedIds: number[]): Promise<void> {
     const currentIds = this.ids;
@@ -121,14 +142,14 @@ export abstract class OrderedList<T extends { id: number }> extends Array<T> {
       );
     }
 
-    // Guards run after input validation so bad input still fails fast without a
-    // network call, but before persisting so we never claim a reorder that the
-    // server would reject or ignore.
-    await this.assertManuallySorted();
+    // Blocked if the section is a mirror (read-only). After validation so bad
+    // input still fails fast without a network call.
     await this.assertWritable();
 
     const byId = new Map(this.map((item) => [item.id, item]));
-    await this.persistOrder(orderedIds);
+    for (let i = 0; i < orderedIds.length; i++) {
+      await this.move(orderedIds[i], i);
+    }
 
     const reordered = orderedIds.map((id) => byId.get(id)!);
     this.length = 0;
@@ -139,9 +160,8 @@ export abstract class OrderedList<T extends { id: number }> extends Array<T> {
    * Moves a single item to a new position within this list.
    *
    * Provide exactly one of `position` (1-based), `before`, `after`, or `to`.
-   * Persists the resulting full order in a single bulk request and updates this
-   * array's in-memory order. Throws (with no API call) on an unknown target ID,
-   * an unknown sibling, or invalid options.
+   * Persists the move and updates this array's in-memory order. Throws (with no
+   * API call) on an unknown target ID, an unknown sibling, or invalid options.
    */
   async reorder(id: number, options: ReorderOptions): Promise<void> {
     const fromIndex = this.findIndex((item) => item.id === id);
@@ -165,7 +185,7 @@ export abstract class OrderedList<T extends { id: number }> extends Array<T> {
 
     // Compute the target index against the list WITHOUT the moved item, so
     // before/after reference positions are stable and the same index is valid
-    // for the in-memory splice.
+    // for both the wire PUT and the in-memory splice.
     const withoutMoved = this.filter((item) => item.id !== id);
     let targetIndex: number;
 
@@ -197,17 +217,22 @@ export abstract class OrderedList<T extends { id: number }> extends Array<T> {
       targetIndex = options.before !== undefined ? siblingIndex : siblingIndex + 1;
     }
 
-    // Guards run after input validation, before any API call.
-    await this.assertManuallySorted();
+    // Blocked if the section is a mirror (read-only). After validation so bad
+    // input still fails fast without a network call.
     await this.assertWritable();
 
-    // Build the full desired order and persist it in one request.
-    const moved = this[fromIndex];
-    const nextOrder = withoutMoved.slice();
-    nextOrder.splice(targetIndex, 0, moved);
-    await this.persistOrder(nextOrder.map((item) => item.id));
+    await this.move(id, targetIndex);
 
-    this.length = 0;
-    this.push(...nextOrder);
+    const [moved] = this.splice(fromIndex, 1);
+    this.splice(targetIndex, 0, moved);
   }
+}
+
+/** True when a T4ApiError is the reorder "invalid_index_collection" rejection. */
+function isInvalidIndexCollection(error: T4ApiError): boolean {
+  const body = error.responseBody as { errorMessage?: string } | string | null | undefined;
+  if (body && typeof body === 'object' && body.errorMessage === 'invalid_index_collection') {
+    return true;
+  }
+  return typeof body === 'string' && body.includes('invalid_index_collection');
 }
