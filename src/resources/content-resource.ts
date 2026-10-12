@@ -167,7 +167,7 @@ export class ContentResource {
         createContentItem(child.content, this.httpClient, this.sectionId),
       ),
     );
-    return ContentList.create(items, this.httpClient, this.sectionId, language);
+    return ContentList.create(items, this.httpClient, this.sectionId, language, response.sortType ?? 0);
   }
 
   /** Retrieves a single content item by ID. */

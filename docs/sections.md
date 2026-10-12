@@ -125,9 +125,11 @@ const children = await t4.section(233).subsections();
 await children.setOrder([560, 500, 540]);
 ```
 
-If the array omits a child that is present, includes an unknown ID, or repeats one, `setOrder()` throws a descriptive error and makes no changes. T4 has no bulk-order endpoint, so `setOrder()` issues one move request per subsection in sequence.
+If the array omits a child that is present, includes an unknown ID, or repeats one, `setOrder()` throws a descriptive error and makes no changes. Both `setOrder()` and `reorder()` persist the full order in a single bulk request, so the change is applied atomically — a failure can't leave the section half reordered.
 
-> Reordering applies to sections ordered manually. It does not override a parent configured to sort its children automatically.
+> Reordering only applies to a parent that sorts its children manually. If the parent is configured to sort automatically (alphabetically, by date, etc.), `reorder()` and `setOrder()` throw rather than silently doing nothing — switch the parent to manual sorting in Terminalfour first.
+>
+> The list reflects the children in the requested language. For a parent that mixes languages, reorder one language at a time.
 
 ### Full tree or subtree
 

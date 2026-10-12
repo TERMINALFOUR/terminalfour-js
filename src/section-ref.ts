@@ -504,7 +504,10 @@ export class SectionRef {
    */
   async subsections(options?: LanguageOption): Promise<SubsectionList> {
     const language = resolveLanguage(options?.language, this.defaultLanguage);
-    const response = await this.httpClient.request<{ children: Array<{ id: number; name: string; lastModified: number }> }>({
+    const response = await this.httpClient.request<{
+      children: Array<{ id: number; name: string; lastModified: number }>;
+      sortType: number;
+    }>({
       method: 'GET',
       path: `/hierarchy/${this.sectionId}/${language}/subsections?showAll=false&removeNonTranslated=false`,
     });
@@ -513,7 +516,7 @@ export class SectionRef {
       name: child.name,
       lastModified: child.lastModified ? new Date(child.lastModified) : null,
     }));
-    return SubsectionList.create(items, this.httpClient, this.sectionId, language);
+    return SubsectionList.create(items, this.httpClient, this.sectionId, language, response.sortType ?? 0);
   }
 
   /** Returns users and groups with edit rights on this section, including inherited rights. */

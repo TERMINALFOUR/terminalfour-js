@@ -21,9 +21,25 @@ export interface ReorderOptions {
  * Subclasses supply:
  * - the entity label used in error messages (`entityLabel`),
  * - a human-readable scope for errors (`scopeLabel`, e.g. `section 236`),
- * - the single-item move request (`moveToIndex`).
+ * - the bulk reorder request (`persistOrder`).
  *
  * Each T must expose a numeric `id`.
+ *
+ * ## Ordering is a single atomic request
+ *
+ * Both `setOrder` and `reorder` compute the full desired order and persist it
+ * with ONE bulk PUT (`persistOrder`). The T4 API applies the whole list in a
+ * single transaction, so a partial failure can't leave the section half
+ * reordered. (The older per-item index endpoint is not used — it is not
+ * transactional and is unreliable on some server versions.)
+ *
+ * ## Auto-sorted sections
+ *
+ * A section whose children are automatically sorted (alphabetical, by date,
+ * etc.) ignores a manual order: the server would silently re-sort, so a reorder
+ * is a no-op or an error. Subclasses that know the section's sort type override
+ * {@link assertManuallySorted} to refuse reordering with a clear message rather
+ * than reporting a success that didn't happen.
  */
 export abstract class OrderedList<T extends { id: number }> extends Array<T> {
   // Derived arrays (map/filter/slice/etc.) are plain Arrays — the subclass
@@ -39,10 +55,30 @@ export abstract class OrderedList<T extends { id: number }> extends Array<T> {
   protected abstract readonly scopeLabel: string;
 
   /**
-   * Persists a single move to the API: place `id` at the 0-based `index`.
-   * Subclasses implement the specific endpoint.
+   * Persists a complete new order to the API in a single request. `orderedIds`
+   * is the full set of IDs in this list, in the desired order. Subclasses
+   * implement the specific bulk endpoint.
    */
-  protected abstract moveToIndex(id: number, index: number): Promise<void>;
+  protected abstract persistOrder(orderedIds: number[]): Promise<void>;
+
+  /**
+   * Throws when the list's section is read-only (a mirror), so reordering is
+   * blocked. Called after input validation but before any API call. Subclasses
+   * that live in a section override this; the default is a no-op.
+   */
+  protected async assertWritable(): Promise<void> {
+    // Default: writable. Overridden by section-backed lists.
+  }
+
+  /**
+   * Throws when the section is not manually sorted, so a manual order would be
+   * ignored by the server. Called after input validation but before any API
+   * call. Subclasses that know the section's sort type override this; the
+   * default is a no-op.
+   */
+  protected async assertManuallySorted(): Promise<void> {
+    // Default: assume manual. Overridden by section-backed lists.
+  }
 
   private get ids(): number[] {
     return this.map((item) => item.id);
@@ -55,8 +91,8 @@ export abstract class OrderedList<T extends { id: number }> extends Array<T> {
    * more, no fewer, no duplicates. Throws a descriptive error otherwise and
    * makes no API calls.
    *
-   * Persists the new order (one request per item, in sequence — there is no
-   * bulk endpoint) and updates this array's in-memory order to match.
+   * Persists the new order in a single bulk request and updates this array's
+   * in-memory order to match.
    */
   async setOrder(orderedIds: number[]): Promise<void> {
     const currentIds = this.ids;
@@ -85,10 +121,14 @@ export abstract class OrderedList<T extends { id: number }> extends Array<T> {
       );
     }
 
+    // Guards run after input validation so bad input still fails fast without a
+    // network call, but before persisting so we never claim a reorder that the
+    // server would reject or ignore.
+    await this.assertManuallySorted();
+    await this.assertWritable();
+
     const byId = new Map(this.map((item) => [item.id, item]));
-    for (let i = 0; i < orderedIds.length; i++) {
-      await this.moveToIndex(orderedIds[i], i);
-    }
+    await this.persistOrder(orderedIds);
 
     const reordered = orderedIds.map((id) => byId.get(id)!);
     this.length = 0;
@@ -99,8 +139,9 @@ export abstract class OrderedList<T extends { id: number }> extends Array<T> {
    * Moves a single item to a new position within this list.
    *
    * Provide exactly one of `position` (1-based), `before`, `after`, or `to`.
-   * Persists the move and updates this array's in-memory order. Throws (with no
-   * API call) on an unknown target ID, an unknown sibling, or invalid options.
+   * Persists the resulting full order in a single bulk request and updates this
+   * array's in-memory order. Throws (with no API call) on an unknown target ID,
+   * an unknown sibling, or invalid options.
    */
   async reorder(id: number, options: ReorderOptions): Promise<void> {
     const fromIndex = this.findIndex((item) => item.id === id);
@@ -124,7 +165,7 @@ export abstract class OrderedList<T extends { id: number }> extends Array<T> {
 
     // Compute the target index against the list WITHOUT the moved item, so
     // before/after reference positions are stable and the same index is valid
-    // for both the wire PUT and the in-memory splice.
+    // for the in-memory splice.
     const withoutMoved = this.filter((item) => item.id !== id);
     let targetIndex: number;
 
@@ -156,9 +197,17 @@ export abstract class OrderedList<T extends { id: number }> extends Array<T> {
       targetIndex = options.before !== undefined ? siblingIndex : siblingIndex + 1;
     }
 
-    await this.moveToIndex(id, targetIndex);
+    // Guards run after input validation, before any API call.
+    await this.assertManuallySorted();
+    await this.assertWritable();
 
-    const [moved] = this.splice(fromIndex, 1);
-    this.splice(targetIndex, 0, moved);
+    // Build the full desired order and persist it in one request.
+    const moved = this[fromIndex];
+    const nextOrder = withoutMoved.slice();
+    nextOrder.splice(targetIndex, 0, moved);
+    await this.persistOrder(nextOrder.map((item) => item.id));
+
+    this.length = 0;
+    this.push(...nextOrder);
   }
 }

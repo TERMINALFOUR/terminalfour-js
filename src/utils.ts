@@ -267,6 +267,36 @@ export function assertNotEmptyIfPresent(value: string | null | undefined, label:
   }
 }
 
+/**
+ * The sort type of a section's children that permits a manual display order.
+ *
+ * The T4 API reports a section's content/subsection sort type as a number
+ * (`sortType` in the list response). `0` is the manual/normal sort — the only
+ * one that honours an explicit order. Any other value is an automatic sort
+ * (alphabetical, by date, etc.), where the server re-sorts on its own and would
+ * silently ignore a manual reorder.
+ */
+export const MANUAL_SORT_TYPE = 0;
+
+/**
+ * Asserts that a section's children are manually sorted, so a reorder will be
+ * honoured. Throws when the section uses an automatic sort, rather than letting
+ * the SDK report a success for an order the server will ignore or reject.
+ *
+ * @param sortType the `sortType` from the content/subsection list response
+ * @param entityLabel noun for the error message, e.g. `'content'` / `'section'`
+ * @param sectionId the section whose children are being reordered
+ */
+export function assertManualSortType(sortType: number, entityLabel: string, sectionId: number): void {
+  if (sortType !== MANUAL_SORT_TYPE) {
+    throw new Error(
+      `Cannot reorder ${entityLabel} in section ${sectionId}: it uses an automatic sort ` +
+      `(sortType ${sortType}), so a manual order would be ignored. Switch the section to ` +
+      `manual sorting in Terminalfour before reordering.`,
+    );
+  }
+}
+
 
 /** Accepted file input: a file path, URL, Blob, ReadableStream, or { file, filename } object */
 export type FileInput = string | Blob | NodeJS.ReadableStream | { file: string | Blob | NodeJS.ReadableStream; filename?: string };

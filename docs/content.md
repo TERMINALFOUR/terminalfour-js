@@ -168,9 +168,9 @@ const items = await t4.section(482).content.list();
 await items.setOrder([9150, 9132, 9140]);
 ```
 
-If the array omits an ID that is in the section, includes an ID that is not, or repeats an ID, `setOrder()` throws a descriptive error and makes no changes. T4 has no bulk-order endpoint, so `setOrder()` issues one move request per item in sequence.
+If the array omits an ID that is in the section, includes an ID that is not, or repeats an ID, `setOrder()` throws a descriptive error and makes no changes. Both `setOrder()` and `reorder()` persist the full order in a single bulk request, so the change is applied atomically — a failure can't leave the section half reordered.
 
-> Reordering applies to content ordered manually. It does not override a section configured to sort its content automatically (for example alphabetically or by date).
+> Reordering only applies to a section that sorts its content manually. If the section is configured to sort automatically (for example alphabetically or by date), `reorder()` and `setOrder()` throw rather than silently doing nothing — switch the section to manual sorting in Terminalfour first.
 
 ## Approve, duplicate, move, or remove
 

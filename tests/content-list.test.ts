@@ -25,7 +25,7 @@ function dto(id: number, name: string): ContentDTO {
 }
 
 /** Builds the /contents response for a given ordered set of items. */
-function contentsResponse(items: Array<{ id: number; name: string }>) {
+function contentsResponse(items: Array<{ id: number; name: string }>, sortType = 0) {
   return {
     children: items.map((item, i) => ({
       id: 1000 + i,
@@ -33,7 +33,7 @@ function contentsResponse(items: Array<{ id: number; name: string }>) {
       printSequence: i + 1,
       sortLock: 'UNLOCKED',
     })),
-    sortType: 0,
+    sortType,
   };
 }
 
@@ -43,12 +43,24 @@ const DEFAULT_ITEMS = [
   { id: 11924, name: 'Charlie' },
 ];
 
-/** Returns the index PUT calls that were made, in order. */
-function indexCalls(http: HttpClient): Array<{ contentId: number; index: number }> {
+/**
+ * Returns the bulk reorder PUT payloads that were made, in order. Each is the
+ * full `[{ id, index }]` body sent to `PUT /hierarchy/{id}/{lang}/contents`.
+ */
+function bulkCalls(http: HttpClient): Array<Array<{ id: number; index: number }>> {
   return (http.request as ReturnType<typeof vi.fn>).mock.calls
-    .map((c: unknown[]) => c[0] as { method: string; path: string; body?: { id: number; index: number } })
-    .filter((o) => o.method === 'PUT' && /\/contents\/\d+\/index$/.test(o.path))
-    .map((o) => ({ contentId: o.body!.id, index: o.body!.index }));
+    .map((c: unknown[]) => c[0] as { method: string; path: string; body?: Array<{ id: number; index: number }> })
+    .filter((o) => o.method === 'PUT' && /\/contents$/.test(o.path))
+    .map((o) => o.body!);
+}
+
+/** The IDs, in order, from the single bulk PUT expected for one reorder/setOrder. */
+function singleBulkOrder(http: HttpClient): number[] {
+  const calls = bulkCalls(http);
+  expect(calls).toHaveLength(1);
+  // index must be the array position for every item
+  calls[0].forEach((entry, i) => expect(entry.index).toBe(i));
+  return calls[0].map((e) => e.id);
 }
 
 describe('ContentList', () => {
@@ -62,7 +74,7 @@ describe('ContentList', () => {
         if (opts.method === 'GET' && opts.path.includes('/contents')) {
           return contentsResponse(DEFAULT_ITEMS);
         }
-        if (opts.method === 'PUT' && /\/contents\/\d+\/index$/.test(opts.path)) {
+        if (opts.method === 'PUT' && /\/contents$/.test(opts.path)) {
           return undefined;
         }
         throw new Error(`Unexpected request: ${opts.method} ${opts.path}`);
@@ -89,55 +101,55 @@ describe('ContentList', () => {
     });
   });
 
-  describe('reorder() — target computation (0-based wire index)', () => {
-    it('position is 1-based and sent 0-based', async () => {
+  describe('reorder() — sends the full order in one bulk request', () => {
+    it('position is 1-based; the full new order is persisted once', async () => {
       const list = await resource.list();
       await list.reorder(11924, { position: 1 });
-      expect(indexCalls(http)).toEqual([{ contentId: 11924, index: 0 }]);
+      expect(singleBulkOrder(http)).toEqual([11924, 11922, 11923]);
       expect(list.map((i) => i.id)).toEqual([11924, 11922, 11923]);
     });
 
     it('position: 2 moves to the second slot', async () => {
       const list = await resource.list();
       await list.reorder(11924, { position: 2 });
-      expect(indexCalls(http)).toEqual([{ contentId: 11924, index: 1 }]);
+      expect(singleBulkOrder(http)).toEqual([11922, 11924, 11923]);
       expect(list.map((i) => i.id)).toEqual([11922, 11924, 11923]);
     });
 
-    it("to: 'first' moves to index 0", async () => {
+    it("to: 'first' moves to the front", async () => {
       const list = await resource.list();
       await list.reorder(11923, { to: 'first' });
-      expect(indexCalls(http)).toEqual([{ contentId: 11923, index: 0 }]);
+      expect(singleBulkOrder(http)).toEqual([11923, 11922, 11924]);
       expect(list.map((i) => i.id)).toEqual([11923, 11922, 11924]);
     });
 
     it("to: 'last' moves to the end", async () => {
       const list = await resource.list();
       await list.reorder(11922, { to: 'last' });
-      expect(indexCalls(http)).toEqual([{ contentId: 11922, index: 2 }]);
+      expect(singleBulkOrder(http)).toEqual([11923, 11924, 11922]);
       expect(list.map((i) => i.id)).toEqual([11923, 11924, 11922]);
     });
 
     it('before: references a sibling position', async () => {
       const list = await resource.list();
-      // Move Charlie before Alpha → index 0
+      // Move Charlie before Alpha
       await list.reorder(11924, { before: 11922 });
-      expect(indexCalls(http)).toEqual([{ contentId: 11924, index: 0 }]);
+      expect(singleBulkOrder(http)).toEqual([11924, 11922, 11923]);
       expect(list.map((i) => i.id)).toEqual([11924, 11922, 11923]);
     });
 
     it('after: references a sibling position', async () => {
       const list = await resource.list();
-      // Move Alpha after Bravo. Without Alpha: [Bravo(0), Charlie(1)] → after Bravo = index 1
+      // Move Alpha after Bravo
       await list.reorder(11922, { after: 11923 });
-      expect(indexCalls(http)).toEqual([{ contentId: 11922, index: 1 }]);
+      expect(singleBulkOrder(http)).toEqual([11923, 11922, 11924]);
       expect(list.map((i) => i.id)).toEqual([11923, 11922, 11924]);
     });
 
     it('clamps an out-of-range position to the last slot', async () => {
       const list = await resource.list();
       await list.reorder(11922, { position: 99 });
-      expect(indexCalls(http)).toEqual([{ contentId: 11922, index: 2 }]);
+      expect(singleBulkOrder(http)).toEqual([11923, 11924, 11922]);
       expect(list.map((i) => i.id)).toEqual([11923, 11924, 11922]);
     });
   });
@@ -189,19 +201,15 @@ describe('ContentList', () => {
       const list = await resource.list();
       (http.request as ReturnType<typeof vi.fn>).mockClear();
       await expect(list.reorder(99999, { position: 1 })).rejects.toThrow();
-      expect(indexCalls(http)).toHaveLength(0);
+      expect(bulkCalls(http)).toHaveLength(0);
     });
   });
 
   describe('setOrder()', () => {
-    it('issues one PUT per item, in ascending index order', async () => {
+    it('persists the full order in a single bulk request', async () => {
       const list = await resource.list();
       await list.setOrder([11924, 11922, 11923]);
-      expect(indexCalls(http)).toEqual([
-        { contentId: 11924, index: 0 },
-        { contentId: 11922, index: 1 },
-        { contentId: 11923, index: 2 },
-      ]);
+      expect(singleBulkOrder(http)).toEqual([11924, 11922, 11923]);
     });
 
     it('updates the in-memory order to match', async () => {
@@ -235,7 +243,50 @@ describe('ContentList', () => {
       const list = await resource.list();
       (http.request as ReturnType<typeof vi.fn>).mockClear();
       await expect(list.setOrder([11922])).rejects.toThrow();
-      expect(indexCalls(http)).toHaveLength(0);
+      expect(bulkCalls(http)).toHaveLength(0);
+    });
+  });
+
+  describe('auto-sorted sections (sortType guard)', () => {
+    beforeEach(() => {
+      (http.request as ReturnType<typeof vi.fn>).mockImplementation(
+        async (opts: { method: string; path: string }) => {
+          if (opts.method === 'GET' && opts.path.includes('/contents')) {
+            // sortType 1 = an automatic sort (e.g. alphabetical)
+            return contentsResponse(DEFAULT_ITEMS, 1);
+          }
+          if (opts.method === 'PUT' && /\/contents$/.test(opts.path)) {
+            return undefined;
+          }
+          throw new Error(`Unexpected request: ${opts.method} ${opts.path}`);
+        },
+      );
+    });
+
+    it('reorder() refuses with a clear message and makes no PUT', async () => {
+      const list = await resource.list();
+      (http.request as ReturnType<typeof vi.fn>).mockClear();
+      await expect(list.reorder(11924, { position: 1 })).rejects.toThrow(
+        /automatic sort \(sortType 1\)/,
+      );
+      expect(bulkCalls(http)).toHaveLength(0);
+    });
+
+    it('setOrder() refuses with a clear message and makes no PUT', async () => {
+      const list = await resource.list();
+      (http.request as ReturnType<typeof vi.fn>).mockClear();
+      await expect(list.setOrder([11924, 11922, 11923])).rejects.toThrow(
+        /Cannot reorder content in section 8461/,
+      );
+      expect(bulkCalls(http)).toHaveLength(0);
+    });
+
+    it('input validation still runs before the sort-type guard', async () => {
+      const list = await resource.list();
+      // An unknown ID should fail on validation, not the sort guard.
+      await expect(list.reorder(99999, { position: 1 })).rejects.toThrow(
+        /not in section 8461/,
+      );
     });
   });
 });

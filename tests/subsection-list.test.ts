@@ -15,16 +15,27 @@ const DEFAULT_CHILDREN = [
   { id: 299, name: 'Charlie', lastModified: 1_700_000_000_002 },
 ];
 
-function subsectionsResponse(children: Array<{ id: number; name: string; lastModified: number }>) {
-  return { children };
+function subsectionsResponse(children: Array<{ id: number; name: string; lastModified: number }>, sortType = 0) {
+  return { children, sortType };
 }
 
-/** Returns the index PUT calls that were made, in order. */
-function indexCalls(http: HttpClient): Array<{ childId: number; index: number }> {
+/**
+ * Returns the bulk reorder PUT payloads made, in order. Each is the full
+ * `[{ id, index }]` body sent to `PUT /hierarchy/{parent}/{lang}/subsections`.
+ */
+function bulkCalls(http: HttpClient): Array<Array<{ id: number; index: number }>> {
   return (http.request as ReturnType<typeof vi.fn>).mock.calls
-    .map((c: unknown[]) => c[0] as { method: string; path: string; body?: { id: number; index: number } })
-    .filter((o) => o.method === 'PUT' && /\/subsections\/\d+\/index$/.test(o.path))
-    .map((o) => ({ childId: o.body!.id, index: o.body!.index }));
+    .map((c: unknown[]) => c[0] as { method: string; path: string; body?: Array<{ id: number; index: number }> })
+    .filter((o) => o.method === 'PUT' && /\/subsections$/.test(o.path))
+    .map((o) => o.body!);
+}
+
+/** The IDs, in order, from the single bulk PUT expected for one reorder/setOrder. */
+function singleBulkOrder(http: HttpClient): number[] {
+  const calls = bulkCalls(http);
+  expect(calls).toHaveLength(1);
+  calls[0].forEach((entry, i) => expect(entry.index).toBe(i));
+  return calls[0].map((e) => e.id);
 }
 
 describe('SubsectionList', () => {
@@ -38,7 +49,7 @@ describe('SubsectionList', () => {
         if (opts.method === 'GET' && opts.path.includes('/subsections')) {
           return subsectionsResponse(DEFAULT_CHILDREN);
         }
-        if (opts.method === 'PUT' && /\/subsections\/\d+\/index$/.test(opts.path)) {
+        if (opts.method === 'PUT' && /\/subsections$/.test(opts.path)) {
           return undefined;
         }
         throw new Error(`Unexpected request: ${opts.method} ${opts.path}`);
@@ -66,41 +77,41 @@ describe('SubsectionList', () => {
     });
   });
 
-  describe('reorder() — hits the subsections index endpoint', () => {
-    it('uses PUT /hierarchy/{parent}/{lang}/subsections/{child}/index', async () => {
+  describe('reorder() — sends the full order to the bulk subsections endpoint', () => {
+    it('uses PUT /hierarchy/{parent}/{lang}/subsections', async () => {
       const list = await ref.subsections();
       await list.reorder(299, { position: 1 });
       const call = (http.request as ReturnType<typeof vi.fn>).mock.calls
         .map((c: unknown[]) => c[0] as { method: string; path: string })
         .find((o) => o.method === 'PUT');
-      expect(call!.path).toBe('/hierarchy/236/en/subsections/299/index');
+      expect(call!.path).toBe('/hierarchy/236/en/subsections');
     });
 
-    it('position is 1-based and sent 0-based', async () => {
+    it('position is 1-based; the full new order is persisted once', async () => {
       const list = await ref.subsections();
       await list.reorder(299, { position: 1 });
-      expect(indexCalls(http)).toEqual([{ childId: 299, index: 0 }]);
+      expect(singleBulkOrder(http)).toEqual([299, 297, 298]);
       expect(list.map((s) => s.id)).toEqual([299, 297, 298]);
     });
 
     it("to: 'last' moves to the end", async () => {
       const list = await ref.subsections();
       await list.reorder(297, { to: 'last' });
-      expect(indexCalls(http)).toEqual([{ childId: 297, index: 2 }]);
+      expect(singleBulkOrder(http)).toEqual([298, 299, 297]);
       expect(list.map((s) => s.id)).toEqual([298, 299, 297]);
     });
 
     it('before: references a sibling position', async () => {
       const list = await ref.subsections();
       await list.reorder(299, { before: 297 });
-      expect(indexCalls(http)).toEqual([{ childId: 299, index: 0 }]);
+      expect(singleBulkOrder(http)).toEqual([299, 297, 298]);
       expect(list.map((s) => s.id)).toEqual([299, 297, 298]);
     });
 
     it('after: references a sibling position', async () => {
       const list = await ref.subsections();
       await list.reorder(297, { after: 298 });
-      expect(indexCalls(http)).toEqual([{ childId: 297, index: 1 }]);
+      expect(singleBulkOrder(http)).toEqual([298, 297, 299]);
       expect(list.map((s) => s.id)).toEqual([298, 297, 299]);
     });
 
@@ -122,19 +133,15 @@ describe('SubsectionList', () => {
       const list = await ref.subsections();
       (http.request as ReturnType<typeof vi.fn>).mockClear();
       await expect(list.reorder(99999, { position: 1 })).rejects.toThrow();
-      expect(indexCalls(http)).toHaveLength(0);
+      expect(bulkCalls(http)).toHaveLength(0);
     });
   });
 
   describe('setOrder()', () => {
-    it('issues one PUT per child, in ascending index order', async () => {
+    it('persists the full order in a single bulk request', async () => {
       const list = await ref.subsections();
       await list.setOrder([299, 297, 298]);
-      expect(indexCalls(http)).toEqual([
-        { childId: 299, index: 0 },
-        { childId: 297, index: 1 },
-        { childId: 298, index: 2 },
-      ]);
+      expect(singleBulkOrder(http)).toEqual([299, 297, 298]);
       expect(list.map((s) => s.id)).toEqual([299, 297, 298]);
     });
 
@@ -155,6 +162,40 @@ describe('SubsectionList', () => {
       await expect(list.setOrder([297, 297, 298])).rejects.toThrow(
         /duplicate section ID/,
       );
+    });
+  });
+
+  describe('auto-sorted parent (sortType guard)', () => {
+    beforeEach(() => {
+      (http.request as ReturnType<typeof vi.fn>).mockImplementation(
+        async (opts: { method: string; path: string }) => {
+          if (opts.method === 'GET' && opts.path.includes('/subsections')) {
+            return subsectionsResponse(DEFAULT_CHILDREN, 2); // 2 = an automatic sort
+          }
+          if (opts.method === 'PUT' && /\/subsections$/.test(opts.path)) {
+            return undefined;
+          }
+          throw new Error(`Unexpected request: ${opts.method} ${opts.path}`);
+        },
+      );
+    });
+
+    it('reorder() refuses and makes no PUT', async () => {
+      const list = await ref.subsections();
+      (http.request as ReturnType<typeof vi.fn>).mockClear();
+      await expect(list.reorder(299, { position: 1 })).rejects.toThrow(
+        /Cannot reorder section in section 236.*automatic sort \(sortType 2\)/,
+      );
+      expect(bulkCalls(http)).toHaveLength(0);
+    });
+
+    it('setOrder() refuses and makes no PUT', async () => {
+      const list = await ref.subsections();
+      (http.request as ReturnType<typeof vi.fn>).mockClear();
+      await expect(list.setOrder([299, 297, 298])).rejects.toThrow(
+        /automatic sort \(sortType 2\)/,
+      );
+      expect(bulkCalls(http)).toHaveLength(0);
     });
   });
 });
