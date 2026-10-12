@@ -116,6 +116,29 @@ describe('T4Client', () => {
     expect(client).toBeDefined();
   });
 
+  describe('User-Agent', () => {
+    function userAgentOf(client: T4Client): string | undefined {
+      const httpClient = (client as unknown as { httpClient: HttpClient }).httpClient;
+      return (httpClient as unknown as { userAgent?: string }).userAgent;
+    }
+
+    it('sets a default SDK User-Agent with the package version', () => {
+      const client = new T4Client(validConfig);
+      expect(userAgentOf(client)).toMatch(/^Terminalfour-JS-SDK\/\d+\.\d+\.\d+/);
+    });
+
+    it('prepends a custom userAgent before the SDK default', () => {
+      const client = new T4Client({ ...validConfig, userAgent: 'MyCustomApplication/1.0.1' });
+      const ua = userAgentOf(client);
+      expect(ua).toMatch(/^MyCustomApplication\/1\.0\.1 Terminalfour-JS-SDK\/\d+\.\d+\.\d+$/);
+    });
+
+    it('ignores a blank userAgent identifier', () => {
+      const client = new T4Client({ ...validConfig, userAgent: '   ' });
+      expect(userAgentOf(client)).toMatch(/^Terminalfour-JS-SDK\/\d+\.\d+\.\d+$/);
+    });
+  });
+
   it('clearCache() does not throw', () => {
     const client = new T4Client(validConfig);
     expect(() => client.clearCache()).not.toThrow();

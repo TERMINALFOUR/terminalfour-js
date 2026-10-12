@@ -10,6 +10,16 @@ export interface T4ClientConfig {
   language?: string;
   /** Maximum number of concurrent HTTP requests. Defaults to 10. */
   concurrency?: number;
+  /**
+   * Optional identifier prepended to the SDK's User-Agent header, separated by
+   * a single space. The SDK default (`Terminalfour-JS-SDK/<version>`) is always
+   * present; this value leads so the application is identified before the SDK,
+   * e.g. `userAgent: 'MyApp/1.0.1'` yields
+   * `MyApp/1.0.1 Terminalfour-JS-SDK/1.2.0`. It is additive, not a replacement.
+   * Blank or whitespace-only values are ignored. Follow the User-Agent
+   * convention of whitespace-separated `product/version` tokens.
+   */
+  userAgent?: string;
 }
 
 /** Optional language override for per-call language selection */

@@ -14,13 +14,15 @@ export class HttpClient {
   private readonly baseUrl: string;
   private readonly apiToken: string;
   private readonly maxConcurrency: number;
+  private readonly userAgent?: string;
   private inFlight = 0;
   private waitQueue: Array<() => void> = [];
 
-  constructor(baseUrl: string, apiToken: string, concurrency?: number) {
+  constructor(baseUrl: string, apiToken: string, concurrency?: number, userAgent?: string) {
     this.baseUrl = baseUrl;
     this.apiToken = apiToken;
     this.maxConcurrency = concurrency ?? DEFAULT_CONCURRENCY;
+    this.userAgent = userAgent;
   }
 
   async request<T>(options: HttpRequestOptions): Promise<T> {
@@ -60,6 +62,14 @@ export class HttpClient {
       Accept: 'application/json',
       ...options.headers,
     };
+
+    // The SDK User-Agent is set after the per-request header spread so it can
+    // never be overridden by a caller — the SDK identity and version must
+    // always be present for server-side diagnostics. Applies to every request,
+    // including multipart uploads.
+    if (this.userAgent) {
+      headers['User-Agent'] = this.userAgent;
+    }
 
     let body: string | FormData | undefined;
 
