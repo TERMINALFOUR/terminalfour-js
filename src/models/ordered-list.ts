@@ -45,8 +45,9 @@ export interface ReorderOptions {
  * manually. The SDK does not try to predict which moves are allowed: it sends
  * the move and, if the server rejects it (`417 invalid_index_collection` —
  * e.g. moving an auto-sorted item, or moving a pinned item outside its block),
- * rethrows a clear error via {@link describeReorderRejection}. Pinned-item
- * reorders, and reorders in fully-manual sections, go through unchanged.
+ * the private `move()` wrapper rethrows a clear error (preserving the original
+ * `T4ApiError` as its `cause`). Pinned-item reorders, and reorders in
+ * fully-manual sections, go through unchanged.
  */
 export abstract class OrderedList<T extends { id: number }> extends Array<T> {
   // Derived arrays (map/filter/slice/etc.) are plain Arrays — the subclass
