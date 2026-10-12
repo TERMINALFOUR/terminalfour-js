@@ -6,7 +6,7 @@ import {
   AddSectionData,
   ApiSectionDTO,
 } from './types.js';
-import { resolveLanguage, mapStatus, flattenGroups, STATUS_CODES, AUTH_LEVEL_MAP, debugWarn, DEFAULT_CACHE_TTL, getCacheEpoch, assertRequired, assertNotEmptyIfPresent, assertSectionNotMirrored, cacheSectionMirrorStatus, parseDuplicatedSectionId } from './utils.js';
+import { resolveLanguage, mapStatus, flattenGroups, STATUS_CODES, AUTH_LEVEL_MAP, debugWarn, DEFAULT_CACHE_TTL, getCacheEpoch, assertRequired, assertNotEmptyIfPresent, assertSectionNotMirrored, assertSectionNotMirroredCached, parseDuplicatedSectionId } from './utils.js';
 import { ContentResource } from './resources/content-resource.js';
 import { SectionItem } from './models/section-item.js';
 import { SubsectionList } from './models/subsection-list.js';
@@ -899,11 +899,24 @@ export class SectionRef {
   }
 
   /**
-   * Deletes (deactivates) this section by setting its status to inactive.
-   * Allowed on mirrored sections — deactivating is how a mirror is removed.
+   * Deletes this section via the server's dedicated delete endpoint
+   * (`DELETE /hierarchy/{id}`), leaving it inactive (status 2) — call
+   * {@link purge} afterwards to remove it permanently.
+   *
+   * Using the real endpoint (rather than a status-inactive PUT) means T4
+   * applies its own delete logic: the user's role is checked, and every mirror
+   * of this section is deleted too. By default the server also refuses the
+   * delete when other content links to this section; pass `{ mandatory: true }`
+   * to force it through anyway.
+   *
+   * @param options.mandatory Force the delete even when content links to this
+   *   section (default `false` — the server rejects such a delete).
    */
-  async delete(options?: LanguageOption): Promise<void> {
-    await this.update({ status: 'inactive' }, options, true);
+  async delete(options?: { mandatory?: boolean } & LanguageOption): Promise<void> {
+    const path = options?.mandatory
+      ? `/hierarchy/${this.sectionId}?mandatory=true`
+      : `/hierarchy/${this.sectionId}`;
+    await this.httpClient.request<void>({ method: 'DELETE', path });
   }
 
   /**
@@ -940,8 +953,13 @@ export class SectionRef {
 
   /**
    * Moves this section under a new parent section.
+   *
+   * The destination must not be a mirror: content placed inside a mirror is
+   * read-only, and the SDK's own guards would then refuse to move or delete it
+   * back out. This throws before the move if the destination is a mirror.
    */
   async move(newParentId: number): Promise<void> {
+    await assertSectionNotMirroredCached(this.httpClient, newParentId, this.defaultLanguage, 'section');
     await this.httpClient.request<void>({
       method: 'MOVE',
       path: `/hierarchy/${this.sectionId}/${newParentId}`,
@@ -960,15 +978,19 @@ export class SectionRef {
    * `hierarchy.enableMirroringOfSections` first and throws a clear error if it
    * is disabled, before attempting the operation.
    *
+   * Whether access-control and section-metadata content is mirrored is governed
+   * by the instance config options `hierarchy.mirrorAccessControlContent` and
+   * `hierarchy.mirrorSectionMetaData`, not by this call. (An earlier
+   * `accessControl` option was removed because the server ignores it — see
+   * DECISIONS.)
+   *
    * @param destinationParentId The section the mirror branch is placed under.
-   * @param options.accessControl How access control is handled on the mirror:
-   *   `'ignore'` (default), `'duplicate'`, or `'mirror'`.
    * @param options.retainLinkTargets Keep section/content link targets pointing
    *   at the originals rather than the mirrored copies. Defaults to `false`.
    */
   async mirror(
     destinationParentId: number,
-    options?: { accessControl?: 'ignore' | 'duplicate' | 'mirror'; retainLinkTargets?: boolean },
+    options?: { retainLinkTargets?: boolean },
   ): Promise<void> {
     if (!Number.isInteger(destinationParentId) || destinationParentId <= 0) {
       throw new Error(
@@ -985,12 +1007,16 @@ export class SectionRef {
       );
     }
 
-    const accessControlMap = { ignore: 'IGNORE', duplicate: 'DUPLICATE', mirror: 'MIRROR' } as const;
-    const content = accessControlMap[options?.accessControl ?? 'ignore'];
+    // The destination must not itself be a mirror (read-only); placing a branch
+    // inside one would be unremovable through the SDK's own guards.
+    await assertSectionNotMirroredCached(this.httpClient, destinationParentId, this.defaultLanguage, 'section');
 
+    // `content` is hard-coded to MIRROR to match the server, which ignores this
+    // field for mirroring anyway (DuplicateMirrorIgnoreContent.MIRROR). What
+    // actually gets mirrored is governed by instance config, not this call.
     const body: { destination: number; content: string; retainLinkTargets?: boolean } = {
       destination: destinationParentId,
-      content,
+      content: 'MIRROR',
     };
     if (options?.retainLinkTargets) {
       body.retainLinkTargets = true;
@@ -1059,6 +1085,10 @@ export class SectionRef {
     });
     assertSectionNotMirrored(this.httpClient, this.sectionId, source);
 
+    // The destination must not be a mirror (read-only); a branch duplicated into
+    // one would be unremovable through the SDK's own guards.
+    await assertSectionNotMirroredCached(this.httpClient, destinationParentId, language, 'section');
+
     const contentMap = { ignore: 'IGNORE', duplicate: 'DUPLICATE', mirror: 'MIRROR' } as const;
     const body: {
       destination: number;
@@ -1086,6 +1116,11 @@ export class SectionRef {
       method: 'COPY',
       path: `/hierarchy/${this.sectionId}/${language}`,
       body,
+      // Duplicating a large branch (especially with content) can keep the
+      // server busy for minutes with silent phases between output. Give it a
+      // generous total timeout so the SDK doesn't abort a copy that's still
+      // committing server-side.
+      timeoutMs: 10 * 60 * 1000,
     });
 
     const newSectionId = parseDuplicatedSectionId(responseBody);
@@ -1107,11 +1142,10 @@ export class SectionRef {
   async update(
     data: { name?: string; show?: boolean; status?: 'approved' | 'pending' | 'inactive'; customFields?: Record<string, unknown> },
     options?: LanguageOption,
-    skipMirrorCheck = false,
   ): Promise<SectionItem> {
     // This path PUTs directly (it does not go through SectionItem.save()), so
-    // guard the name here. Present-only: omitting name is valid (e.g. delete()
-    // calls update({ status: 'inactive' })), but setting it blank is not.
+    // guard the name here. Present-only: omitting name is valid, but setting it
+    // blank is not.
     assertNotEmptyIfPresent(data.name, 'Section name');
     const language = resolveLanguage(options?.language, this.defaultLanguage);
 
@@ -1119,13 +1153,9 @@ export class SectionRef {
       method: 'GET',
       path: `/hierarchy/${this.sectionId}/${language}`,
     });
-    // delete()/purge() unmirror a section, so they skip this guard. Every other
-    // caller of update() is a genuine content modification and is blocked.
-    if (!skipMirrorCheck) {
-      assertSectionNotMirrored(this.httpClient, this.sectionId, section);
-    } else {
-      cacheSectionMirrorStatus(this.httpClient, this.sectionId, section);
-    }
+    // A mirror is read-only. There is no bypass: delete() now uses the server's
+    // DELETE endpoint rather than a status PUT, so update() always guards.
+    assertSectionNotMirrored(this.httpClient, this.sectionId, section);
 
     const updated = {
       ...section,

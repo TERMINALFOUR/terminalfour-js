@@ -609,24 +609,37 @@ function mirrorError(sectionId: number, mirrorOf: number, scope: 'section' | 'co
  *
  * ⚠️ FRAGILE — depends on T4's human-readable progress log format, not a
  * structured field. The endpoint returns newline-delimited text (mislabeled
- * `application/json`) ending in a `DUPLICATE_BRANCH_SUCCESS` marker, with a
- * `Duplicated section id: <n>` line. If a future T4 version changes either the
- * success marker or that line's wording, this parser must be updated. See
- * API_NUANCES.
+ * `application/json`): one `<section path>` line per copied section, then a
+ * terminal marker line — `DUPLICATE_BRANCH_SUCCESS` on success, or an `ERROR:…`
+ * line followed by `DUPLICATE_BRANCH_ERROR` on failure. The new root id is on a
+ * `Duplicated section id: <n>` line. If a future T4 version changes the markers
+ * or that line's wording, this parser must be updated. See API_NUANCES.
  *
- * Throws when the success marker is absent (treats a partial/failed body as a
- * failure) or when the id line can't be found (rather than returning a wrong id).
+ * Error reporting notes (review issues 5 & 11):
+ * - The success check looks at the **last non-empty line**, not anywhere in the
+ *   body — section path lines contain user-entered names, so a stray
+ *   "DUPLICATE_BRANCH_SUCCESS" in a name couldn't produce a false positive, and
+ *   a marker written mid-stream before a rollback wouldn't be mistaken for a
+ *   committed success.
+ * - On failure the error message surfaces the **end** of the response (where
+ *   the real `ERROR:` line lives), not the start (which is just path lines).
  */
 export function parseDuplicatedSectionId(responseBody: unknown): number {
   const text = typeof responseBody === 'string'
     ? responseBody
     : (responseBody == null ? '' : String(responseBody));
 
-  if (!text.includes('DUPLICATE_BRANCH_SUCCESS')) {
+  const lines = text.split('\n').map((l) => l.trim()).filter((l) => l.length > 0);
+  const lastLine = lines[lines.length - 1] ?? '';
+
+  if (lastLine !== 'DUPLICATE_BRANCH_SUCCESS') {
+    // Prefer the explicit ERROR: line if present; otherwise show the tail.
+    const errorLine = [...lines].reverse().find((l) => l.startsWith('ERROR:'));
+    const detail = errorLine ?? text.slice(-500);
     throw new Error(
-      'Section duplication did not report success. The server response did not contain ' +
-      'the expected completion marker, so the operation may have failed or been interrupted. ' +
-      `Response: ${text.slice(0, 500)}`,
+      'Section duplication did not report success. The server response did not end with the ' +
+      'expected completion marker, so the operation may have failed or been interrupted. ' +
+      `Server detail: ${detail}`,
     );
   }
 
@@ -635,7 +648,7 @@ export function parseDuplicatedSectionId(responseBody: unknown): number {
     throw new Error(
       'Section duplication reported success but the new section ID could not be determined ' +
       'from the server response. The duplicate likely exists; locate it under the destination section. ' +
-      `Response: ${text.slice(0, 500)}`,
+      `Response (tail): ${text.slice(-500)}`,
     );
   }
 

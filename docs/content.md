@@ -219,6 +219,8 @@ await item.mirror(500); // mirror into section 500
 
 Mirroring a content item is not a copy and has no "source": after `item.mirror(500)`, the same item (same ID) exists in both its current section and section 500, and editing it from either section updates both. The target must differ from the item's current section.
 
+> `move`, `mirror`, and `duplicate(sectionId)` also refuse when the **destination** section is a mirror (read-only), since the content placed there couldn't then be edited or removed through the SDK.
+
 ## Element values
 
 | Type | Pass | SDK sends or performs |

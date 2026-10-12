@@ -525,4 +525,30 @@ describe('parseDuplicatedSectionId', () => {
     expect(() => parseDuplicatedSectionId(null)).toThrow(/did not report success/);
     expect(() => parseDuplicatedSectionId(undefined)).toThrow(/did not report success/);
   });
+
+  it('requires the marker on the LAST non-empty line, not just anywhere (issue 11)', () => {
+    // A content path/name containing the marker text must NOT be a false positive
+    // when the real terminal line is an error.
+    const body = [
+      'Home>>A section named DUPLICATE_BRANCH_SUCCESS',
+      'ERROR: destination is invalid',
+      'DUPLICATE_BRANCH_ERROR',
+    ].join('\n');
+    expect(() => parseDuplicatedSectionId(body)).toThrow(/did not report success/);
+  });
+
+  it('surfaces the ERROR: line (end of response) in the failure message (issue 5)', () => {
+    const body = [
+      'Home>>samplesite>>Doc',
+      'Home>>samplesite>>Doc>>Child',
+      'ERROR: parent section is read-only',
+      'DUPLICATE_BRANCH_ERROR',
+    ].join('\n');
+    expect(() => parseDuplicatedSectionId(body)).toThrow(/ERROR: parent section is read-only/);
+  });
+
+  it('accepts a trailing blank line after the success marker', () => {
+    const body = successBody + '\n\n';
+    expect(parseDuplicatedSectionId(body)).toBe(8822);
+  });
 });

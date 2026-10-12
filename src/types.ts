@@ -213,4 +213,11 @@ export interface HttpRequestOptions {
   headers?: Record<string, string>;
   multipart?: boolean;
   formData?: FormData;
+  /**
+   * Optional total timeout in milliseconds for this request (via
+   * `AbortSignal.timeout`). Used for long-running operations like section
+   * duplication, whose server can stay silent for minutes between output. When
+   * omitted, no SDK-level timeout is applied (the runtime's defaults apply).
+   */
+  timeoutMs?: number;
 }

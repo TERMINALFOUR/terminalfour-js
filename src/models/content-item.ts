@@ -904,6 +904,12 @@ export class ContentItem {
     const destination = sectionId ?? this._sectionId;
     const sameSection = destination === this._sectionId;
 
+    // The destination must not be a mirror either (read-only); content copied
+    // into one would be unremovable through the SDK's own guards.
+    if (!sameSection) {
+      await assertSectionNotMirroredCached(this._httpClient, destination, this.language);
+    }
+
     let name = this.name;
 
     if (sameSection) {
@@ -949,6 +955,8 @@ export class ContentItem {
   async move(sectionId: number): Promise<void> {
     // Content in a mirrored section is read-only; moving it out is blocked.
     await assertSectionNotMirroredCached(this._httpClient, this._sectionId, this.language);
+    // The destination must not be a mirror either (read-only destination).
+    await assertSectionNotMirroredCached(this._httpClient, sectionId, this.language);
     await this._httpClient.request<void>({
       method: 'MOVE',
       path: `/content/${this.language}`,
@@ -982,6 +990,8 @@ export class ContentItem {
     }
     // Content in a mirrored section is read-only; mirroring it elsewhere is blocked.
     await assertSectionNotMirroredCached(this._httpClient, this._sectionId, this.language);
+    // The target must not be a mirror either (read-only destination).
+    await assertSectionNotMirroredCached(this._httpClient, targetSectionId, this.language);
     await this._httpClient.request<void>({
       method: 'LINK',
       path: `/content/${this.language}`,

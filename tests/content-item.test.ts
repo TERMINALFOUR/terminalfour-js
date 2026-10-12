@@ -1602,3 +1602,51 @@ describe('ContentItem – read-only guard in a mirrored section', () => {
     expect(mutatingCalls(http)).toHaveLength(0);
   });
 });
+
+describe('ContentItem – read-only guard on the DESTINATION section', () => {
+  let http: HttpClient;
+
+  // Source section 20 is normal; destination 30 is a mirror of 8817.
+  beforeEach(() => {
+    http = mockHttpClient();
+    (http.request as ReturnType<typeof vi.fn>).mockImplementation(
+      async (opts: { method: string; path: string }) => {
+        if (opts.method === 'GET' && opts.path === '/hierarchy/20/en') {
+          return { id: 20, name: 'Source', parent: 1 };
+        }
+        if (opts.method === 'GET' && opts.path === '/hierarchy/30/en') {
+          return { id: 30, name: 'Mirror Dest', parent: 1, mirrorOf: 8817 };
+        }
+        if (opts.path === '/type/') return ELEMENT_TYPES;
+        if (opts.path.startsWith('/list/1/')) return sizeList;
+        throw new Error(`Blocked path should not be reached: ${opts.method} ${opts.path}`);
+      },
+    );
+  });
+
+  function mutatingCalls(client: HttpClient) {
+    return (client.request as ReturnType<typeof vi.fn>).mock.calls
+      .map((c: unknown[]) => c[0] as { method: string })
+      .filter((o) => o.method === 'POST' || o.method === 'MOVE' || o.method === 'COPY' || o.method === 'LINK');
+  }
+
+  const destError = /Cannot modify content in section 30: it is a mirror of section 8817/;
+
+  it('move() into a mirror destination throws and makes no write', async () => {
+    const item = new ContentItem(contentDTO, http, 20);
+    await expect(item.move(30)).rejects.toThrow(destError);
+    expect(mutatingCalls(http)).toHaveLength(0);
+  });
+
+  it('mirror() into a mirror destination throws and makes no write', async () => {
+    const item = new ContentItem(contentDTO, http, 20);
+    await expect(item.mirror(30)).rejects.toThrow(destError);
+    expect(mutatingCalls(http)).toHaveLength(0);
+  });
+
+  it('duplicate() into a mirror destination throws and makes no write', async () => {
+    const item = new ContentItem(contentDTO, http, 20);
+    await expect(item.duplicate(30)).rejects.toThrow(destError);
+    expect(mutatingCalls(http)).toHaveLength(0);
+  });
+});

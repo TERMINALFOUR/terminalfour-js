@@ -86,10 +86,18 @@ When the instance has a section metadata content type configured, `addSection()`
 ### Delete, purge, or move
 
 ```typescript
-await t4.section(500).delete();   // soft delete: sets status to inactive
+await t4.section(500).delete();   // soft delete (leaves the section inactive)
 await t4.section(500).purge();    // permanent removal; section must be inactive first
 await t4.section(500).move(233);  // move under section 233
 ```
+
+`delete()` uses Terminalfour's dedicated delete endpoint, so the server applies its own rules: it checks your permissions and deletes every mirror of the section too. By default it refuses when other content links to the section; pass `{ mandatory: true }` to force it:
+
+```typescript
+await t4.section(500).delete({ mandatory: true });
+```
+
+`move()` refuses when the destination is a mirror (a read-only section), since content placed there couldn't be edited or moved back out.
 
 ### Mirror a branch
 
@@ -99,16 +107,17 @@ Mirror this section's entire branch under a destination parent. A mirror is a re
 await t4.section(8817).mirror(8331); // mirror section 8817's branch under section 8331
 ```
 
-The second argument configures how access control is handled and whether link targets are retained:
+The second argument retains link targets if needed:
 
 ```typescript
 await t4.section(8817).mirror(8331, {
-  accessControl: 'duplicate',   // 'ignore' (default), 'duplicate', or 'mirror'
-  retainLinkTargets: true,       // keep section/content link targets; default false
+  retainLinkTargets: true,   // keep section/content link targets; default false
 });
 ```
 
-Mirroring must be enabled on the T4 instance. The SDK checks this first and throws a clear error if it is disabled, before attempting the operation. Mirroring always applies to the whole branch below the source section.
+Whether access-control and section-metadata content is mirrored is governed by instance configuration (`hierarchy.mirrorAccessControlContent`, `hierarchy.mirrorSectionMetaData`), not by this call.
+
+Mirroring must be enabled on the T4 instance. The SDK checks this first and throws a clear error if it is disabled, before attempting the operation. It also refuses when the destination is itself a mirror. Mirroring always applies to the whole branch below the source section.
 
 #### Mirrored sections are read-only
 
@@ -123,6 +132,8 @@ await t4.section(8820).update({ name: 'x' });
 Blocked on a mirror: `update`, `addSection`, `setPageLayouts`, `setMetaDatas`, `setEditRights`, `removeEditRights`, `setContentTypes`, `removeContentTypes`, `SectionItem.save()`, and all content writes in the section (`content.create`/`update`/`delete`/`purge`/`approveAll`, and a content item's `save`/`approve`/`move`/`duplicate`).
 
 Still allowed: `delete()` and `purge()` (how you remove a mirror), `move()`, `publish()`, and all reads. Detect a mirror via `mirrorOf` (see [Read and update a section](#read-and-update-a-section)).
+
+The same read-only rule applies to the **destination** of a `move`, `mirror`, or `duplicate`: the SDK refuses to place a section or content into a mirror, since it would then be unremovable through these same guards.
 
 ### Duplicate a branch
 
@@ -147,9 +158,9 @@ await t4.section(236).duplicate(794, {
 
 `content` chooses how content is handled: `'ignore'` copies structure only, `'duplicate'` copies the content, `'mirror'` mirrors it.
 
-> Duplicating a large branch can take some time — especially with `content: 'duplicate'` — because the server completes the whole copy before responding. The promise resolves when duplication finishes.
+> Duplicating a large branch can take some time — especially with `content: 'duplicate'` — because the server completes the whole copy before responding. The SDK allows up to 10 minutes for the request. If it still times out, the duplicate may have completed server-side regardless, so check the destination before retrying to avoid creating a second copy.
 
-> A mirrored section cannot be duplicated — `duplicate()` throws if the source section is a mirror.
+> `duplicate()` throws if the source section is a mirror, or if the destination is a mirror.
 
 ## Navigate the section tree
 

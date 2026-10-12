@@ -100,6 +100,7 @@ export class HttpClient {
         method: options.method,
         headers,
         body,
+        ...(options.timeoutMs !== undefined && { signal: AbortSignal.timeout(options.timeoutMs) }),
       });
     } catch (error) {
       throw new T4ApiError({
@@ -129,7 +130,29 @@ export class HttpClient {
       });
     }
 
-    const text = await response.text();
+    // Reading the body can itself fail — e.g. a timeout or dropped connection
+    // during a long, intermittently-silent streamed response (section
+    // duplication). Wrap it so callers get a T4ApiError, not a raw undici
+    // error, and so the message warns that the server-side operation may still
+    // have completed (retrying could duplicate work).
+    let text: string;
+    try {
+      text = await response.text();
+    } catch (error) {
+      throw new T4ApiError({
+        statusCode: response.status,
+        statusText: 'Response Stream Error',
+        responseBody:
+          'The request succeeded but reading the response body failed ' +
+          `(${error instanceof Error ? error.message : String(error)}). ` +
+          'For long operations such as section duplication the server may have ' +
+          'completed the work regardless — check before retrying to avoid duplicates.',
+        requestUrl: url,
+        requestMethod: options.method,
+        cause: error instanceof Error ? error : undefined,
+      });
+    }
+
     if (!text) return undefined as T;
 
     try {
