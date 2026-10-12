@@ -286,6 +286,27 @@ export function assertNotEmptyIfPresent(value: string | null | undefined, label:
 export const MANUAL_SORT_TYPE = 0;
 
 /**
+ * Human-readable names for the automatic `sortType` values T4 can set on a
+ * section. `0` (manual) is intentionally absent — it is handled separately as
+ * the only reorderable case. Used only to make the "can't reorder" error
+ * message legible; an unrecognised value degrades to the bare number.
+ */
+const SORT_TYPE_NAMES: Record<number, string> = {
+  10: 'Alphabetical (A–Z)',
+  20: 'Alphabetical (Z–A)',
+  30: 'Last updated (newest first)',
+  40: 'Last updated (oldest first)',
+  50: 'Publish date (newest first)',
+  60: 'Publish date (oldest first)',
+};
+
+/** Describes a sortType for an error message: `"Alphabetical (A–Z)" (sortType 10)`. */
+function describeSortType(sortType: number): string {
+  const name = SORT_TYPE_NAMES[sortType];
+  return name ? `"${name}" (sortType ${sortType})` : `sortType ${sortType}`;
+}
+
+/**
  * Asserts that a section's children are manually sorted, so a reorder will be
  * honoured. Throws when the section uses an automatic sort, rather than letting
  * the request fail with an opaque server 500.
@@ -298,10 +319,10 @@ export function assertManualSortType(sortType: number, entityLabel: string, sect
   if (sortType !== MANUAL_SORT_TYPE) {
     throw new Error(
       `Cannot reorder ${entityLabel} in section ${sectionId}: it uses an automatic sort ` +
-      `(sortType ${sortType}), which Terminalfour does not allow reordering through the API — ` +
-      `the server rejects it. This holds even if some items are pinned to the top or bottom; ` +
-      `pinned-item ordering is managed in the Terminalfour UI. Switch the section to manual ` +
-      `sorting if you need to reorder it from the SDK.`,
+      `(${describeSortType(sortType)}), which Terminalfour does not allow reordering through ` +
+      `the API — the server rejects it. This holds even if some items are pinned to the top or ` +
+      `bottom; pinned-item ordering is managed in the Terminalfour UI. Switch the section to ` +
+      `manual sorting if you need to reorder it from the SDK.`,
     );
   }
 }

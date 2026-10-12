@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach, beforeAll } from 'vitest';
-import { resolveLanguage, toTimestamp, decodeHtmlEntities, debugWarn, invalidateAllCaches, parseFileSize, normaliseBaseUrl, assertNotBrowser, readPrimaryGroup, readSharedGroups, writePrimaryGroup, writeSharedGroups, assertGroupsValid, assertRequired, assertNotEmptyIfPresent } from '../src/utils.js';
+import { resolveLanguage, toTimestamp, decodeHtmlEntities, debugWarn, invalidateAllCaches, parseFileSize, normaliseBaseUrl, assertNotBrowser, readPrimaryGroup, readSharedGroups, writePrimaryGroup, writeSharedGroups, assertGroupsValid, assertRequired, assertNotEmptyIfPresent, assertManualSortType, MANUAL_SORT_TYPE } from '../src/utils.js';
 
 describe('resolveLanguage', () => {
   it('returns override when provided', () => {
@@ -490,5 +490,40 @@ describe('assertNotEmptyIfPresent', () => {
 
   it('throws for a whitespace-only string', () => {
     expect(() => assertNotEmptyIfPresent('   ', 'Content name')).toThrow('Content name cannot be empty');
+  });
+});
+
+describe('assertManualSortType', () => {
+  it('passes for the manual sort type (0)', () => {
+    expect(() => assertManualSortType(MANUAL_SORT_TYPE, 'content', 304)).not.toThrow();
+    expect(() => assertManualSortType(0, 'section', 304)).not.toThrow();
+  });
+
+  it('throws for an automatic sort type, naming the entity and section', () => {
+    expect(() => assertManualSortType(10, 'content', 304)).toThrow(
+      /Cannot reorder content in section 304/,
+    );
+  });
+
+  it.each([
+    [10, 'Alphabetical (A–Z)'],
+    [20, 'Alphabetical (Z–A)'],
+    [30, 'Last updated (newest first)'],
+    [40, 'Last updated (oldest first)'],
+    [50, 'Publish date (newest first)'],
+    [60, 'Publish date (oldest first)'],
+  ])('names sortType %i as %s', (sortType, name) => {
+    expect(() => assertManualSortType(sortType, 'content', 304)).toThrow(name);
+    expect(() => assertManualSortType(sortType, 'content', 304)).toThrow(`sortType ${sortType}`);
+  });
+
+  it('falls back to the bare number for an unknown sort type', () => {
+    expect(() => assertManualSortType(99, 'content', 304)).toThrow(/sortType 99/);
+    // No invented name for an unrecognised value
+    expect(() => assertManualSortType(99, 'content', 304)).not.toThrow(/"/);
+  });
+
+  it('mentions pinned items so the refusal is not mistaken for a bug', () => {
+    expect(() => assertManualSortType(10, 'content', 304)).toThrow(/pinned/);
   });
 });

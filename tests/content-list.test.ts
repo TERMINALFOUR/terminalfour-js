@@ -269,9 +269,16 @@ describe('ContentList', () => {
       const list = await resource.list();
       (http.request as ReturnType<typeof vi.fn>).mockClear();
       await expect(list.reorder(11924, { position: 1 })).rejects.toThrow(
-        /automatic sort \(sortType 10\)/,
+        /sortType 10/,
       );
       expect(bulkCalls(http)).toHaveLength(0);
+    });
+
+    it('names the sort type in the error (Alphabetical A–Z for 10)', async () => {
+      const list = await resource.list();
+      await expect(list.reorder(11924, { position: 1 })).rejects.toThrow(
+        /Alphabetical \(A–Z\)/,
+      );
     });
 
     it('the refusal mentions pinned items so it is not mistaken for a bug', async () => {
