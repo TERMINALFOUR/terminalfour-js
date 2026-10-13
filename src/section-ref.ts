@@ -6,12 +6,36 @@ import {
   AddSectionData,
   ApiSectionDTO,
 } from './types.js';
-import { resolveLanguage, mapStatus, flattenGroups, STATUS_CODES, AUTH_LEVEL_MAP, debugWarn, DEFAULT_CACHE_TTL, getCacheEpoch, assertRequired, assertNotEmptyIfPresent, assertSectionNotMirrored, assertSectionNotMirroredCached, parseDuplicatedSectionId } from './utils.js';
+import { resolveLanguage, mapStatus, flattenGroups, STATUS_CODES, AUTH_LEVEL_MAP, debugWarn, DEFAULT_CACHE_TTL, getCacheEpoch, assertRequired, assertNotEmptyIfPresent, assertSectionNotMirrored, assertSectionNotMirroredCached, cacheSectionMirrorStatus, parseDuplicatedSectionId } from './utils.js';
 import { ContentResource } from './resources/content-resource.js';
 import { SectionItem } from './models/section-item.js';
 import { SubsectionList } from './models/subsection-list.js';
 import { MediaCreateFn } from './element-resolver.js';
 import { ContentCache } from './content-cache.js';
+
+/** Options for {@link SectionRef.duplicate}. */
+export interface DuplicateOptions extends LanguageOption {
+  /** How content is handled: `'ignore'` (default, structure only), `'duplicate'` (copy content), or `'mirror'` (mirror content). */
+  content?: 'ignore' | 'duplicate' | 'mirror';
+  /** Copy page layout usage. Defaults to `true`. */
+  copyPageLayouts?: boolean;
+  /** Copy user access rights. Defaults to `true`. */
+  copyUserAccess?: boolean;
+  /** Copy content type access rights. Defaults to `true`. */
+  copyContentTypeAccess?: boolean;
+  /** Keep section/content link targets pointing at the originals rather than the duplicated copies. Defaults to `false`. */
+  retainLinkTargets?: boolean;
+  /**
+   * Total timeout in milliseconds for the duplicate request. Large branches can
+   * keep the server busy for minutes with silent phases, so this defaults to
+   * `600000` (10 minutes). Raise it for very large branches, or lower it to
+   * fail faster.
+   */
+  timeoutMs?: number;
+}
+
+/** Default total timeout for a section duplicate request (10 minutes). */
+const DEFAULT_DUPLICATE_TIMEOUT_MS = 10 * 60 * 1000;
 
 /** A node in the section hierarchy tree */
 export interface SectionTreeNode {
@@ -538,6 +562,15 @@ export class SectionRef {
       path: `/hierarchy/${this.sectionId}/${language}`,
     });
 
+    // Seed the mirror-status cache from the DTO we just fetched, so a later
+    // read-only guard on this section can reuse it without another GET. Note we
+    // deliberately do NOT cache/serve `sourceOfMirror` — the check below reads
+    // it from this fresh DTO. `sourceOfMirror` gates which endpoint we call, so
+    // a 5-minute-stale value could wrongly reject (or admit) right after a
+    // mirror is added/removed; the guard cache's staleness tolerance is only
+    // appropriate for the advisory read-only `mirrorOf` check.
+    cacheSectionMirrorStatus(this.httpClient, this.sectionId, section);
+
     if (section.sourceOfMirror !== true) {
       throw new Error(
         `Section ${this.sectionId} is not the source of any mirror (sourceOfMirror is false).`,
@@ -909,10 +942,14 @@ export class SectionRef {
    * delete when other content links to this section; pass `{ mandatory: true }`
    * to force it through anyway.
    *
+   * Note: `DELETE /hierarchy/{id}` is not language-scoped — it removes the whole
+   * section across all languages. There is intentionally no `language` option,
+   * so callers aren't misled into thinking a single language can be deleted.
+   *
    * @param options.mandatory Force the delete even when content links to this
    *   section (default `false` — the server rejects such a delete).
    */
-  async delete(options?: { mandatory?: boolean } & LanguageOption): Promise<void> {
+  async delete(options?: { mandatory?: boolean }): Promise<void> {
     const path = options?.mandatory
       ? `/hierarchy/${this.sectionId}?mandatory=true`
       : `/hierarchy/${this.sectionId}`;
@@ -1050,24 +1087,12 @@ export class SectionRef {
    * is a mirror.
    *
    * @param destinationParentId The section the duplicated branch is placed under.
-   * @param options.content How content is handled: `'ignore'` (default, structure
-   *   only), `'duplicate'` (copy content), or `'mirror'` (mirror content).
-   * @param options.copyPageLayouts Copy page layout usage. Defaults to `true`.
-   * @param options.copyUserAccess Copy user access rights. Defaults to `true`.
-   * @param options.copyContentTypeAccess Copy content type access rights. Defaults to `true`.
-   * @param options.retainLinkTargets Keep section/content link targets pointing at
-   *   the originals rather than the duplicated copies. Defaults to `false`.
+   * @param options Duplication settings — see {@link DuplicateOptions} (content
+   *   handling, what to copy, link retention, `language`, and `timeoutMs`).
    */
   async duplicate(
     destinationParentId: number,
-    options?: {
-      content?: 'ignore' | 'duplicate' | 'mirror';
-      copyPageLayouts?: boolean;
-      copyUserAccess?: boolean;
-      copyContentTypeAccess?: boolean;
-      retainLinkTargets?: boolean;
-    },
-    opts?: LanguageOption,
+    options?: DuplicateOptions,
   ): Promise<SectionItem> {
     if (!Number.isInteger(destinationParentId) || destinationParentId <= 0) {
       throw new Error(
@@ -1075,7 +1100,8 @@ export class SectionRef {
       );
     }
 
-    const language = resolveLanguage(opts?.language, this.defaultLanguage);
+    const language = resolveLanguage(options?.language, this.defaultLanguage);
+    const timeoutMs = options?.timeoutMs ?? DEFAULT_DUPLICATE_TIMEOUT_MS;
 
     // A mirrored section cannot be duplicated. Fetch the source DTO (also used
     // by the guard, which caches the status for any later content-path checks).
@@ -1117,10 +1143,10 @@ export class SectionRef {
       path: `/hierarchy/${this.sectionId}/${language}`,
       body,
       // Duplicating a large branch (especially with content) can keep the
-      // server busy for minutes with silent phases between output. Give it a
-      // generous total timeout so the SDK doesn't abort a copy that's still
-      // committing server-side.
-      timeoutMs: 10 * 60 * 1000,
+      // server busy for minutes with silent phases between output. Default is a
+      // generous 10-minute total timeout (overridable via options.timeoutMs) so
+      // the SDK doesn't abort a copy that's still committing server-side.
+      timeoutMs,
     });
 
     const newSectionId = parseDuplicatedSectionId(responseBody);

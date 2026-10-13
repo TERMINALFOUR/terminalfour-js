@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { SectionRef } from '../src/section-ref.js';
 import { SectionItem } from '../src/models/section-item.js';
 import { HttpClient } from '../src/http-client.js';
+import { assertSectionNotMirroredCached } from '../src/utils.js';
 
 function mockHttpClient() {
   return { request: vi.fn() } as unknown as HttpClient;
@@ -1637,11 +1638,36 @@ describe('SectionRef', () => {
       expect(copyCall(http)).toBeUndefined();
     });
 
-    it('passes a long timeout on the COPY request', async () => {
+    it('defaults the COPY request timeout to 10 minutes', async () => {
       mockDuplicate(http);
       await ref.duplicate(794);
       const call = copyCall(http) as { timeoutMs?: number };
-      expect(call.timeoutMs).toBeGreaterThanOrEqual(60_000);
+      expect(call.timeoutMs).toBe(10 * 60 * 1000);
+    });
+
+    it('lets the caller override timeoutMs via options', async () => {
+      mockDuplicate(http);
+      await ref.duplicate(794, { timeoutMs: 30_000 });
+      const call = copyCall(http) as { timeoutMs?: number };
+      expect(call.timeoutMs).toBe(30_000);
+    });
+
+    it('accepts language via the single options bag', async () => {
+      // mockDuplicate keys its mocks on /en; a fr language should hit /fr paths.
+      (http.request as ReturnType<typeof vi.fn>).mockImplementation(
+        async (o: { method: string; path: string }) => {
+          if (o.method === 'GET' && o.path === '/hierarchy/233/fr') return { id: 233, name: 'Source', parent: 1 };
+          if (o.method === 'GET' && o.path === '/hierarchy/794/fr') return { id: 794, name: 'Dest', parent: 1 };
+          if (o.method === 'COPY' && o.path === '/hierarchy/233/fr') {
+            return 'Duplicated section id: 795\nDUPLICATE_BRANCH_SUCCESS';
+          }
+          if (o.method === 'GET' && o.path === '/hierarchy/795/fr') return { id: 795, name: 'Source', parent: 794 };
+          throw new Error(`Unexpected: ${o.method} ${o.path}`);
+        },
+      );
+      const result = await ref.duplicate(794, { language: 'fr' });
+      expect(result.id).toBe(795);
+      expect(copyCall(http)!.path).toBe('/hierarchy/233/fr');
     });
 
     it('throws when the response lacks the success marker', async () => {
@@ -1705,6 +1731,28 @@ describe('SectionRef', () => {
       const [first] = await ref.mirrors();
       const item = await first.get();
       expect(item.id).toBe(1888);
+    });
+
+    it('seeds the mirror-status cache so a later guard reuses it (no extra GET)', async () => {
+      let sectionGets = 0;
+      (http.request as ReturnType<typeof vi.fn>).mockImplementation(
+        async (o: { method: string; path: string }) => {
+          if (o.method === 'GET' && o.path === '/hierarchy/233/en') {
+            sectionGets++;
+            return { id: 233, name: 'Source', parent: 1, sourceOfMirror: true, mirrorOf: null };
+          }
+          if (o.method === 'GET' && o.path === '/hierarchy/233/mirrors/en') return mirrorDtos;
+          throw new Error(`Unexpected: ${o.method} ${o.path}`);
+        },
+      );
+
+      await ref.mirrors();
+      expect(sectionGets).toBe(1);
+
+      // A subsequent read-only guard on the same section+client should be served
+      // from the cache mirrors() just seeded — no second GET of /hierarchy/233/en.
+      await assertSectionNotMirroredCached(http, 233, 'en');
+      expect(sectionGets).toBe(1);
     });
 
     it('throws clearly when the section is not a mirror source and does not call the mirrors endpoint', async () => {

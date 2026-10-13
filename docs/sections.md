@@ -97,6 +97,8 @@ await t4.section(500).move(233);  // move under section 233
 await t4.section(500).delete({ mandatory: true });
 ```
 
+`delete()` removes the whole section across **all languages** — the endpoint is not language-scoped, so there is no `language` option (passing one would be misleading).
+
 `move()` refuses when the destination is a mirror (a read-only section), since content placed there couldn't be edited or moved back out.
 
 ### Mirror a branch
@@ -153,12 +155,14 @@ await t4.section(236).duplicate(794, {
   copyUserAccess: true,           // default true
   copyContentTypeAccess: true,    // default true
   retainLinkTargets: true,        // keep section/content link targets; default false
+  language: 'fr',                 // optional; defaults to the client language
+  timeoutMs: 15 * 60 * 1000,      // optional; defaults to 10 minutes
 });
 ```
 
-`content` chooses how content is handled: `'ignore'` copies structure only, `'duplicate'` copies the content, `'mirror'` mirrors it.
+All options live in a single object (`DuplicateOptions`), including `language` and `timeoutMs`. `content` chooses how content is handled: `'ignore'` copies structure only, `'duplicate'` copies the content, `'mirror'` mirrors it.
 
-> Duplicating a large branch can take some time — especially with `content: 'duplicate'` — because the server completes the whole copy before responding. The SDK allows up to 10 minutes for the request. If it still times out, the duplicate may have completed server-side regardless, so check the destination before retrying to avoid creating a second copy.
+> Duplicating a large branch can take some time — especially with `content: 'duplicate'` — because the server completes the whole copy before responding. The request times out after `timeoutMs` (10 minutes by default; raise it for very large branches). If it times out, the duplicate may have completed server-side regardless, so check the destination before retrying to avoid creating a second copy.
 
 > `duplicate()` throws if the source section is a mirror, or if the destination is a mirror.
 
