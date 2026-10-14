@@ -113,7 +113,7 @@ Other resources use fixed languages:
 Every request the SDK makes carries a `User-Agent` header identifying the SDK and its version, so your T4 instance's access logs can distinguish SDK traffic from other API consumers and attribute it to a specific SDK release:
 
 ```
-User-Agent: Terminalfour-JS-SDK/1.1.1
+User-Agent: Terminalfour-JS-SDK/1.2.0
 ```
 
 The version is read from the SDK's `package.json` at runtime, so it always matches the installed release — nothing to update by hand.
@@ -128,7 +128,7 @@ const t4 = new T4Client({
 });
 
 // Resulting header:
-// User-Agent: MyCustomApplication/1.0.1 Terminalfour-JS-SDK/1.1.1
+// User-Agent: MyCustomApplication/1.0.1 Terminalfour-JS-SDK/1.2.0
 ```
 
 Follow the usual `User-Agent` convention of whitespace-separated `product/version` tokens. Blank or whitespace-only values are ignored, leaving just the SDK default. The header applies to every request, including multipart media uploads, and cannot be overridden per request.
