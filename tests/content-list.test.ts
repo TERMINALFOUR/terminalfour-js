@@ -90,6 +90,22 @@ describe('ContentList', () => {
     });
   });
 
+  describe('direct construction guard', () => {
+    it('reorder() on a directly-constructed instance throws a descriptive error', async () => {
+      const list = new ContentList();
+      await expect(list.reorder(1, { position: 1 })).rejects.toThrow(
+        /ContentList was constructed directly.*section\(id\)\.content\.list\(\)/s,
+      );
+    });
+
+    it('setOrder() on a directly-constructed instance throws a descriptive error', async () => {
+      const list = new ContentList();
+      await expect(list.setOrder([])).rejects.toThrow(
+        /constructed directly.*content\.list\(\)/s,
+      );
+    });
+  });
+
   describe('reorder() — target computation (0-based wire index)', () => {
     it('position is 1-based and sent 0-based', async () => {
       const list = await resource.list();

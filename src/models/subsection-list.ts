@@ -30,6 +30,7 @@ export interface SubsectionSummary {
 export class SubsectionList extends OrderedList<SubsectionSummary> {
   protected readonly entityLabel = 'section';
   protected readonly scopeLabel!: string;
+  protected readonly creationHint = 'section(id).subsections()';
 
   private _httpClient!: HttpClient;
   private _parentSectionId!: number;

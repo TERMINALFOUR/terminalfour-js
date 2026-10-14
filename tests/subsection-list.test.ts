@@ -67,6 +67,22 @@ describe('SubsectionList', () => {
     });
   });
 
+  describe('direct construction guard', () => {
+    it('reorder() on a directly-constructed instance throws a descriptive error', async () => {
+      const list = new SubsectionList();
+      await expect(list.reorder(1, { position: 1 })).rejects.toThrow(
+        /SubsectionList was constructed directly.*section\(id\)\.subsections\(\)/s,
+      );
+    });
+
+    it('setOrder() on a directly-constructed instance throws a descriptive error', async () => {
+      const list = new SubsectionList();
+      await expect(list.setOrder([])).rejects.toThrow(
+        /constructed directly.*subsections\(\)/s,
+      );
+    });
+  });
+
   describe('reorder() — hits the single-item subsections index endpoint', () => {
     it('uses PUT /hierarchy/{parent}/{lang}/subsections/{child}/index', async () => {
       const list = await ref.subsections();

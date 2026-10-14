@@ -63,10 +63,33 @@ export abstract class OrderedList<T extends { id: number }> extends Array<T> {
   protected abstract readonly scopeLabel: string;
 
   /**
+   * How a correctly-built instance is obtained, e.g. `'content.list()'`. Used
+   * only in the "constructed directly" error from {@link assertInitialized}.
+   */
+  protected abstract readonly creationHint: string;
+
+  /**
    * Persists a single move to the API: place `id` at the 0-based `index`.
    * Subclasses implement the specific endpoint.
    */
   protected abstract moveToIndex(id: number, index: number): Promise<void>;
+
+  /**
+   * Guards against using an instance that was constructed directly (e.g.
+   * `new ContentList()`) instead of via its static `create()` factory. Such an
+   * instance has none of its collaborators wired up, so a reorder would fail
+   * with an opaque `Cannot read properties of undefined`. `scopeLabel` is set by
+   * every subclass's `create()`, so its absence is a reliable signal. Throws a
+   * descriptive error pointing at the correct way to obtain the list.
+   */
+  protected assertInitialized(): void {
+    if (this.scopeLabel === undefined) {
+      throw new Error(
+        `${this.constructor.name} was constructed directly, which leaves it uninitialised. ` +
+        `Obtain it from ${this.creationHint} instead of using "new".`,
+      );
+    }
+  }
 
   /**
    * Throws when the list's section is read-only (a mirror), so reordering is
@@ -117,6 +140,8 @@ export abstract class OrderedList<T extends { id: number }> extends Array<T> {
    * mid-sequence failure leaves earlier moves applied.
    */
   async setOrder(orderedIds: number[]): Promise<void> {
+    this.assertInitialized();
+
     const currentIds = this.ids;
     const currentSet = new Set(currentIds);
 
@@ -165,6 +190,8 @@ export abstract class OrderedList<T extends { id: number }> extends Array<T> {
    * API call) on an unknown target ID, an unknown sibling, or invalid options.
    */
   async reorder(id: number, options: ReorderOptions): Promise<void> {
+    this.assertInitialized();
+
     const fromIndex = this.findIndex((item) => item.id === id);
     if (fromIndex === -1) {
       throw new Error(

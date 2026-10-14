@@ -21,6 +21,7 @@ export type { ReorderOptions } from './ordered-list.js';
 export class ContentList extends OrderedList<ContentItem> {
   protected readonly entityLabel = 'content';
   protected readonly scopeLabel!: string;
+  protected readonly creationHint = 'section(id).content.list()';
 
   private _httpClient!: HttpClient;
   private _sectionId!: number;
