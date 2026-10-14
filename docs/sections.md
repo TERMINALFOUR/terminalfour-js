@@ -100,6 +100,37 @@ const children = await t4.section(233).subsections();
 // [{ id: 500, name: 'Child', lastModified: Date }]
 ```
 
+`subsections()` returns a `SubsectionList` — an array of child-section summaries that also carries `setOrder()` and `reorder()` (see [Reorder subsections](#reorder-subsections)). It behaves like a normal array everywhere else.
+
+### Reorder subsections
+
+The `SubsectionList` returned by `subsections()` can reorder the direct children of a section. Both methods call the API immediately and keep the list's in-memory order in sync.
+
+Move a single subsection with `reorder(sectionId, options)` — exactly one of `position`, `before`, `after`, or `to`:
+
+```typescript
+const children = await t4.section(233).subsections();
+
+await children.reorder(500, { position: 2 });  // move to the 2nd position (1-based)
+await children.reorder(500, { before: 540 });   // place immediately before another child
+await children.reorder(500, { after: 560 });    // place immediately after another child
+await children.reorder(500, { to: 'first' });   // move to the front
+await children.reorder(500, { to: 'last' });     // move to the end
+```
+
+Replace the whole order with `setOrder(ids)`, passing every child section ID exactly once:
+
+```typescript
+const children = await t4.section(233).subsections();
+await children.setOrder([560, 500, 540]);
+```
+
+If the array omits a child that is present, includes an unknown ID, or repeats one, `setOrder()` throws a descriptive error and makes no changes. `reorder()` sends one move request; `setOrder()` sends one move per child in sequence, so it is **not atomic** — a mid-sequence failure leaves earlier moves applied.
+
+> **Auto-sorted parents and pinned children.** A parent can sort its children automatically (alphabetically, by date). You can still pin a few children to the top or bottom and order those manually. The SDK lets you reorder pinned children and children of manually-sorted parents. If you try a move the parent won't allow (a non-pinned child in an auto-sorted parent, or a pinned child outside its block), Terminalfour rejects it and the SDK throws a clear error.
+>
+> The list reflects the children in the requested language. For a parent that mixes languages, reorder one language at a time.
+
 ### Full tree or subtree
 
 ```typescript
