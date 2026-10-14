@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { SectionRef } from '../src/section-ref.js';
 import { SectionItem } from '../src/models/section-item.js';
 import { HttpClient } from '../src/http-client.js';
+import { assertSectionNotMirroredCached } from '../src/utils.js';
 
 function mockHttpClient() {
   return { request: vi.fn() } as unknown as HttpClient;
@@ -1365,21 +1366,27 @@ describe('SectionRef', () => {
   });
 
   describe('delete()', () => {
-    it('sets section status to inactive via update()', async () => {
-      const currentSection = {
-        id: 233, name: 'Home', parent: 100, status: '0', show: true,
-        channels: [{ id: 1, pageLayout: 5, inheritedPageLayout: 6 }],
-      };
-      let putBody: unknown = null;
-      (http.request as ReturnType<typeof vi.fn>).mockImplementation(async (opts: { method: string; path: string; body?: unknown }) => {
-        if (opts.method === 'GET' && opts.path === '/hierarchy/233/en') return currentSection;
-        if (opts.method === 'PUT' && opts.path === '/hierarchy/233/en') { putBody = opts.body; return undefined; }
+    it('calls DELETE /hierarchy/{id} (server delete endpoint)', async () => {
+      (http.request as ReturnType<typeof vi.fn>).mockImplementation(async (opts: { method: string; path: string }) => {
+        if (opts.method === 'DELETE' && opts.path === '/hierarchy/233') return undefined;
         throw new Error(`Unexpected: ${opts.method} ${opts.path}`);
       });
 
       await ref.delete();
 
-      expect((putBody as Record<string, unknown>).status).toBe('2');
+      const call = (http.request as ReturnType<typeof vi.fn>).mock.calls[0][0];
+      expect(call.method).toBe('DELETE');
+      expect(call.path).toBe('/hierarchy/233');
+    });
+
+    it('appends ?mandatory=true when mandatory is set', async () => {
+      (http.request as ReturnType<typeof vi.fn>).mockResolvedValueOnce(undefined);
+
+      await ref.delete({ mandatory: true });
+
+      const call = (http.request as ReturnType<typeof vi.fn>).mock.calls[0][0];
+      expect(call.method).toBe('DELETE');
+      expect(call.path).toBe('/hierarchy/233?mandatory=true');
     });
   });
 
@@ -1424,14 +1431,359 @@ describe('SectionRef', () => {
 
   describe('move()', () => {
     it('sends MOVE /hierarchy/{sectionId}/{newParentId} with empty body', async () => {
-      (http.request as ReturnType<typeof vi.fn>).mockResolvedValueOnce(undefined);
+      (http.request as ReturnType<typeof vi.fn>).mockImplementation(async (opts: { method: string; path: string }) => {
+        // Destination mirror-guard fetch (destination is not a mirror).
+        if (opts.method === 'GET' && opts.path === '/hierarchy/8254/en') return { id: 8254, name: 'Dest', parent: 1 };
+        if (opts.method === 'MOVE') return undefined;
+        throw new Error(`Unexpected: ${opts.method} ${opts.path}`);
+      });
 
       await ref.move(8254);
 
-      const callArgs = (http.request as ReturnType<typeof vi.fn>).mock.calls[0][0];
-      expect(callArgs.method).toBe('MOVE');
-      expect(callArgs.path).toBe('/hierarchy/233/8254');
-      expect(callArgs.body).toEqual({});
+      const moveCall = (http.request as ReturnType<typeof vi.fn>).mock.calls
+        .map((c: unknown[]) => c[0] as { method: string; path: string; body?: unknown })
+        .find((o) => o.method === 'MOVE');
+      expect(moveCall!.path).toBe('/hierarchy/233/8254');
+      expect(moveCall!.body).toEqual({});
+    });
+
+    it('throws (and does not MOVE) when the destination is a mirror', async () => {
+      (http.request as ReturnType<typeof vi.fn>).mockImplementation(async (opts: { method: string; path: string }) => {
+        if (opts.method === 'GET' && opts.path === '/hierarchy/8254/en') return { id: 8254, name: 'Dest', parent: 1, mirrorOf: 9000 };
+        if (opts.method === 'MOVE') return undefined;
+        throw new Error(`Unexpected: ${opts.method} ${opts.path}`);
+      });
+
+      await expect(ref.move(8254)).rejects.toThrow(/Cannot modify section 8254: it is a mirror of section 9000/);
+      const moveCall = (http.request as ReturnType<typeof vi.fn>).mock.calls
+        .map((c: unknown[]) => c[0] as { method: string })
+        .find((o) => o.method === 'MOVE');
+      expect(moveCall).toBeUndefined();
+    });
+  });
+
+  describe('mirror()', () => {
+    const mirroringEnabled = { name: 'hierarchy.enableMirroringOfSections', type: 'boolean', value: 'true' };
+    const mirroringDisabled = { name: 'hierarchy.enableMirroringOfSections', type: 'boolean', value: 'false' };
+
+    function mockConfig(http: HttpClient, config: unknown) {
+      (http.request as ReturnType<typeof vi.fn>).mockImplementation(
+        async (opts: { method: string; path: string }) => {
+          if (opts.method === 'GET' && opts.path === '/config/hierarchy.enableMirroringOfSections') {
+            return config;
+          }
+          // Destination mirror-guard fetch (destination is not a mirror).
+          if (opts.method === 'GET' && opts.path === '/hierarchy/8331/en') {
+            return { id: 8331, name: 'Dest', parent: 1 };
+          }
+          if (opts.method === 'LINK') return undefined;
+          throw new Error(`Unexpected request: ${opts.method} ${opts.path}`);
+        },
+      );
+    }
+
+    function linkCall(http: HttpClient) {
+      return (http.request as ReturnType<typeof vi.fn>).mock.calls
+        .map((c: unknown[]) => c[0] as { method: string; path: string; body?: Record<string, unknown> })
+        .find((o) => o.method === 'LINK');
+    }
+
+    it('sends LINK /hierarchy/{sectionId} with destination and content MIRROR', async () => {
+      mockConfig(http, mirroringEnabled);
+
+      await ref.mirror(8331);
+
+      const call = linkCall(http);
+      expect(call!.path).toBe('/hierarchy/233');
+      expect(call!.body).toEqual({ destination: 8331, content: 'MIRROR' });
+    });
+
+    it('includes retainLinkTargets: true only when set', async () => {
+      mockConfig(http, mirroringEnabled);
+      await ref.mirror(8331, { retainLinkTargets: true });
+      expect(linkCall(http)!.body).toEqual({
+        destination: 8331,
+        content: 'MIRROR',
+        retainLinkTargets: true,
+      });
+    });
+
+    it('omits retainLinkTargets when false', async () => {
+      mockConfig(http, mirroringEnabled);
+      await ref.mirror(8331, { retainLinkTargets: false });
+      expect(linkCall(http)!.body).not.toHaveProperty('retainLinkTargets');
+    });
+
+    it('throws (and does not LINK) when the destination is a mirror', async () => {
+      (http.request as ReturnType<typeof vi.fn>).mockImplementation(
+        async (opts: { method: string; path: string }) => {
+          if (opts.method === 'GET' && opts.path === '/config/hierarchy.enableMirroringOfSections') return mirroringEnabled;
+          if (opts.method === 'GET' && opts.path === '/hierarchy/8331/en') return { id: 8331, name: 'Dest', parent: 1, mirrorOf: 9000 };
+          if (opts.method === 'LINK') return undefined;
+          throw new Error(`Unexpected request: ${opts.method} ${opts.path}`);
+        },
+      );
+      await expect(ref.mirror(8331)).rejects.toThrow(/Cannot modify section 8331: it is a mirror of section 9000/);
+      expect(linkCall(http)).toBeUndefined();
+    });
+
+    it('throws (and does not call LINK) when mirroring is disabled', async () => {
+      mockConfig(http, mirroringDisabled);
+      await expect(ref.mirror(8331)).rejects.toThrow(/mirroring is not enabled/);
+      expect(linkCall(http)).toBeUndefined();
+    });
+
+    it('throws on an invalid destination without any API call', async () => {
+      await expect(ref.mirror(0)).rejects.toThrow(/positive section ID/);
+      await expect(ref.mirror(-5)).rejects.toThrow(/positive section ID/);
+      expect((http.request as ReturnType<typeof vi.fn>).mock.calls).toHaveLength(0);
+    });
+  });
+
+  describe('duplicate()', () => {
+    const SUCCESS_BODY = [
+      'Home>>samplesite.terminalfour.com>>Home>>Doc Example',
+      'Duplicated section id: 795',
+      'Updating Server Side Links...',
+      'Server Side Links updated successfully',
+      'DUPLICATE_BRANCH_SUCCESS',
+    ].join('\n');
+
+    const sourceSection = { id: 233, name: 'Source', parent: 1, status: 0 };
+    const newSection = { id: 795, name: 'Source', parent: 794, status: 0 };
+
+    function mockDuplicate(http: HttpClient, opts?: { source?: unknown; body?: string; dest?: unknown }) {
+      (http.request as ReturnType<typeof vi.fn>).mockImplementation(
+        async (o: { method: string; path: string }) => {
+          if (o.method === 'GET' && o.path === '/hierarchy/233/en') return opts?.source ?? sourceSection;
+          // Destination mirror-guard fetch (destination 794, not a mirror by default).
+          if (o.method === 'GET' && o.path === '/hierarchy/794/en') return opts?.dest ?? { id: 794, name: 'Dest', parent: 1 };
+          if (o.method === 'COPY' && o.path === '/hierarchy/233/en') return opts?.body ?? SUCCESS_BODY;
+          if (o.method === 'GET' && o.path === '/hierarchy/795/en') return newSection;
+          throw new Error(`Unexpected: ${o.method} ${o.path}`);
+        },
+      );
+    }
+
+    function copyCall(http: HttpClient) {
+      return (http.request as ReturnType<typeof vi.fn>).mock.calls
+        .map((c: unknown[]) => c[0] as { method: string; path: string; body?: Record<string, unknown> })
+        .find((o) => o.method === 'COPY');
+    }
+
+    it('sends COPY /hierarchy/{id}/{language} with defaults and returns the new SectionItem', async () => {
+      mockDuplicate(http);
+
+      const result = await ref.duplicate(794);
+
+      const call = copyCall(http);
+      expect(call!.path).toBe('/hierarchy/233/en');
+      expect(call!.body).toEqual({
+        destination: 794,
+        content: 'IGNORE',
+        pageLayouts: true,
+        users: true,
+        contentTypes: true,
+      });
+      expect(result).toBeInstanceOf(SectionItem);
+      expect(result.id).toBe(795);
+    });
+
+    it('maps content and the copy flags, and includes retainLinkTargets only when set', async () => {
+      mockDuplicate(http);
+
+      await ref.duplicate(794, {
+        content: 'duplicate',
+        copyPageLayouts: false,
+        copyUserAccess: false,
+        copyContentTypeAccess: false,
+        retainLinkTargets: true,
+      });
+
+      expect(copyCall(http)!.body).toEqual({
+        destination: 794,
+        content: 'DUPLICATE',
+        pageLayouts: false,
+        users: false,
+        contentTypes: false,
+        retainLinkTargets: true,
+      });
+    });
+
+    it('maps content: mirror → MIRROR', async () => {
+      mockDuplicate(http);
+      await ref.duplicate(794, { content: 'mirror' });
+      expect(copyCall(http)!.body).toMatchObject({ content: 'MIRROR' });
+    });
+
+    it('omits retainLinkTargets when not set', async () => {
+      mockDuplicate(http);
+      await ref.duplicate(794);
+      expect(copyCall(http)!.body).not.toHaveProperty('retainLinkTargets');
+    });
+
+    it('blocks duplicating a mirrored source section and makes no COPY', async () => {
+      mockDuplicate(http, { source: { ...sourceSection, mirrorOf: 8817 } });
+      await expect(ref.duplicate(794)).rejects.toThrow(
+        /Cannot modify section 233: it is a mirror of section 8817/,
+      );
+      expect(copyCall(http)).toBeUndefined();
+    });
+
+    it('blocks duplicating INTO a mirrored destination and makes no COPY', async () => {
+      mockDuplicate(http, { dest: { id: 794, name: 'Dest', parent: 1, mirrorOf: 9000 } });
+      await expect(ref.duplicate(794)).rejects.toThrow(
+        /Cannot modify section 794: it is a mirror of section 9000/,
+      );
+      expect(copyCall(http)).toBeUndefined();
+    });
+
+    it('defaults the COPY request timeout to 10 minutes', async () => {
+      mockDuplicate(http);
+      await ref.duplicate(794);
+      const call = copyCall(http) as { timeoutMs?: number };
+      expect(call.timeoutMs).toBe(10 * 60 * 1000);
+    });
+
+    it('lets the caller override timeoutMs via options', async () => {
+      mockDuplicate(http);
+      await ref.duplicate(794, { timeoutMs: 30_000 });
+      const call = copyCall(http) as { timeoutMs?: number };
+      expect(call.timeoutMs).toBe(30_000);
+    });
+
+    it('accepts language via the single options bag', async () => {
+      // mockDuplicate keys its mocks on /en; a fr language should hit /fr paths.
+      (http.request as ReturnType<typeof vi.fn>).mockImplementation(
+        async (o: { method: string; path: string }) => {
+          if (o.method === 'GET' && o.path === '/hierarchy/233/fr') return { id: 233, name: 'Source', parent: 1 };
+          if (o.method === 'GET' && o.path === '/hierarchy/794/fr') return { id: 794, name: 'Dest', parent: 1 };
+          if (o.method === 'COPY' && o.path === '/hierarchy/233/fr') {
+            return 'Duplicated section id: 795\nDUPLICATE_BRANCH_SUCCESS';
+          }
+          if (o.method === 'GET' && o.path === '/hierarchy/795/fr') return { id: 795, name: 'Source', parent: 794 };
+          throw new Error(`Unexpected: ${o.method} ${o.path}`);
+        },
+      );
+      const result = await ref.duplicate(794, { language: 'fr' });
+      expect(result.id).toBe(795);
+      expect(copyCall(http)!.path).toBe('/hierarchy/233/fr');
+    });
+
+    it('throws when the response lacks the success marker', async () => {
+      mockDuplicate(http, { body: 'Duplicated section id: 795\nUpdating Server Side Links...' });
+      await expect(ref.duplicate(794)).rejects.toThrow(/did not report success/);
+    });
+
+    it('throws when the new section id cannot be parsed', async () => {
+      mockDuplicate(http, { body: 'Updating Server Side Links...\nDUPLICATE_BRANCH_SUCCESS' });
+      await expect(ref.duplicate(794)).rejects.toThrow(/could not be determined/);
+    });
+
+    it('throws on an invalid destination without any API call', async () => {
+      mockDuplicate(http);
+      await expect(ref.duplicate(0)).rejects.toThrow(/positive section ID/);
+      await expect(ref.duplicate(-2)).rejects.toThrow(/positive section ID/);
+      expect(copyCall(http)).toBeUndefined();
+    });
+  });
+
+  describe('mirrors()', () => {
+    const mirrorDtos = [
+      { id: 1888, parent: 1408, name: 'Program Outline', mirrorOf: 233, sourceOfMirror: false },
+      { id: 1999, parent: 1500, name: 'Program Outline', mirrorOf: 233, sourceOfMirror: false },
+    ];
+
+    it('returns SectionRefs for the mirror sections when sourceOfMirror is true', async () => {
+      (http.request as ReturnType<typeof vi.fn>).mockImplementation(
+        async (o: { method: string; path: string }) => {
+          if (o.method === 'GET' && o.path === '/hierarchy/233/en') {
+            return { id: 233, name: 'Source', parent: 1, sourceOfMirror: true };
+          }
+          if (o.method === 'GET' && o.path === '/hierarchy/233/mirrors/en') return mirrorDtos;
+          throw new Error(`Unexpected: ${o.method} ${o.path}`);
+        },
+      );
+
+      const result = await ref.mirrors();
+
+      expect(result).toHaveLength(2);
+      expect(result.every((r) => r instanceof SectionRef)).toBe(true);
+      // SectionRef exposes its target via content operations path; verify by id through a get()
+      const mirrorsCall = (http.request as ReturnType<typeof vi.fn>).mock.calls
+        .map((c: unknown[]) => c[0] as { method: string; path: string })
+        .find((o) => o.path === '/hierarchy/233/mirrors/en');
+      expect(mirrorsCall).toBeDefined();
+    });
+
+    it('returns refs that target the mirror section ids', async () => {
+      (http.request as ReturnType<typeof vi.fn>).mockImplementation(
+        async (o: { method: string; path: string }) => {
+          if (o.method === 'GET' && o.path === '/hierarchy/233/en') {
+            return { id: 233, name: 'Source', parent: 1, sourceOfMirror: true };
+          }
+          if (o.method === 'GET' && o.path === '/hierarchy/233/mirrors/en') return mirrorDtos;
+          if (o.method === 'GET' && o.path === '/hierarchy/1888/en') return { id: 1888, name: 'Program Outline', parent: 1408 };
+          throw new Error(`Unexpected: ${o.method} ${o.path}`);
+        },
+      );
+
+      const [first] = await ref.mirrors();
+      const item = await first.get();
+      expect(item.id).toBe(1888);
+    });
+
+    it('seeds the mirror-status cache so a later guard reuses it (no extra GET)', async () => {
+      let sectionGets = 0;
+      (http.request as ReturnType<typeof vi.fn>).mockImplementation(
+        async (o: { method: string; path: string }) => {
+          if (o.method === 'GET' && o.path === '/hierarchy/233/en') {
+            sectionGets++;
+            return { id: 233, name: 'Source', parent: 1, sourceOfMirror: true, mirrorOf: null };
+          }
+          if (o.method === 'GET' && o.path === '/hierarchy/233/mirrors/en') return mirrorDtos;
+          throw new Error(`Unexpected: ${o.method} ${o.path}`);
+        },
+      );
+
+      await ref.mirrors();
+      expect(sectionGets).toBe(1);
+
+      // A subsequent read-only guard on the same section+client should be served
+      // from the cache mirrors() just seeded — no second GET of /hierarchy/233/en.
+      await assertSectionNotMirroredCached(http, 233, 'en');
+      expect(sectionGets).toBe(1);
+    });
+
+    it('throws clearly when the section is not a mirror source and does not call the mirrors endpoint', async () => {
+      (http.request as ReturnType<typeof vi.fn>).mockImplementation(
+        async (o: { method: string; path: string }) => {
+          if (o.method === 'GET' && o.path === '/hierarchy/233/en') {
+            return { id: 233, name: 'Source', parent: 1, sourceOfMirror: false };
+          }
+          throw new Error(`Unexpected: ${o.method} ${o.path}`);
+        },
+      );
+
+      await expect(ref.mirrors()).rejects.toThrow(
+        /Section 233 is not the source of any mirror \(sourceOfMirror is false\)/,
+      );
+      const mirrorsCall = (http.request as ReturnType<typeof vi.fn>).mock.calls
+        .map((c: unknown[]) => c[0] as { path: string })
+        .find((o) => o.path.includes('/mirrors/'));
+      expect(mirrorsCall).toBeUndefined();
+    });
+
+    it('treats a missing sourceOfMirror as not a source', async () => {
+      (http.request as ReturnType<typeof vi.fn>).mockImplementation(
+        async (o: { method: string; path: string }) => {
+          if (o.method === 'GET' && o.path === '/hierarchy/233/en') {
+            return { id: 233, name: 'Source', parent: 1 };
+          }
+          throw new Error(`Unexpected: ${o.method} ${o.path}`);
+        },
+      );
+      await expect(ref.mirrors()).rejects.toThrow(/is not the source of any mirror/);
     });
   });
 
@@ -1983,5 +2335,124 @@ describe('SectionRef', () => {
       );
       expect((getCall![0] as { path: string }).path).toBe('/channel/publishables/233/publish');
     });
+  });
+});
+
+describe('SectionRef — read-only guard for a mirrored section', () => {
+  let http: HttpClient;
+  let ref: SectionRef;
+
+  const mirrorSection = { id: 233, name: 'Mirror', parent: 1, status: 0, mirrorOf: 8817 };
+
+  beforeEach(() => {
+    http = mockHttpClient();
+    (SectionRef as unknown as { metaTagCache: unknown }).metaTagCache = null;
+    ref = new SectionRef(http, 233, 'en');
+  });
+
+  function allMock(result: unknown) {
+    (http.request as ReturnType<typeof vi.fn>).mockImplementation(async (opts: { method: string; path: string }) => {
+      if (opts.method === 'GET' && opts.path === '/hierarchy/233/en') return result;
+      if (opts.method === 'GET' && opts.path === '/meta') return [];
+      throw new Error(`Blocked path should not be reached: ${opts.method} ${opts.path}`);
+    });
+  }
+
+  function writeCalls() {
+    return (http.request as ReturnType<typeof vi.fn>).mock.calls
+      .map((c: unknown[]) => c[0] as { method: string })
+      .filter((o) => o.method === 'PUT' || o.method === 'POST');
+  }
+
+  const err = /Cannot modify section 233: it is a mirror of section 8817/;
+
+  it('update() throws and makes no write', async () => {
+    allMock(mirrorSection);
+    await expect(ref.update({ name: 'New' })).rejects.toThrow(err);
+    expect(writeCalls()).toHaveLength(0);
+  });
+
+  it('setPageLayouts() throws and makes no write', async () => {
+    allMock(mirrorSection);
+    await expect(ref.setPageLayouts([{ channelId: 1, pageLayout: 5 }])).rejects.toThrow(err);
+    expect(writeCalls()).toHaveLength(0);
+  });
+
+  it('setMetaDatas() throws and makes no write', async () => {
+    allMock(mirrorSection);
+    await expect(ref.setMetaDatas({ 'og:title': 'x' })).rejects.toThrow(err);
+    expect(writeCalls()).toHaveLength(0);
+  });
+
+  it('setEditRights() throws and makes no write', async () => {
+    allMock(mirrorSection);
+    await expect(ref.setEditRights({ users: [30] })).rejects.toThrow(err);
+    expect(writeCalls()).toHaveLength(0);
+  });
+
+  it('removeEditRights() throws and makes no write', async () => {
+    allMock(mirrorSection);
+    await expect(ref.removeEditRights({ users: [30] })).rejects.toThrow(err);
+    expect(writeCalls()).toHaveLength(0);
+  });
+
+  it('setContentTypes() throws and makes no write', async () => {
+    allMock(mirrorSection);
+    await expect(ref.setContentTypes([{ id: 44, scope: 'section' }])).rejects.toThrow(err);
+    expect(writeCalls()).toHaveLength(0);
+  });
+
+  it('removeContentTypes() throws and makes no write', async () => {
+    allMock(mirrorSection);
+    await expect(ref.removeContentTypes([44])).rejects.toThrow(err);
+    expect(writeCalls()).toHaveLength(0);
+  });
+
+  it('addSection() throws and makes no write', async () => {
+    allMock(mirrorSection);
+    await expect(ref.addSection({ name: 'Child' })).rejects.toThrow(err);
+    expect(writeCalls()).toHaveLength(0);
+  });
+
+  it('delete() is ALLOWED on a mirrored section (uses the server DELETE endpoint)', async () => {
+    (http.request as ReturnType<typeof vi.fn>).mockImplementation(async (opts: { method: string; path: string }) => {
+      if (opts.method === 'DELETE' && opts.path === '/hierarchy/233') return undefined;
+      throw new Error(`Unexpected: ${opts.method} ${opts.path}`);
+    });
+    await expect(ref.delete()).resolves.toBeUndefined();
+    const del = (http.request as ReturnType<typeof vi.fn>).mock.calls
+      .map((c: unknown[]) => c[0] as { method: string; path: string })
+      .find((o) => o.method === 'DELETE');
+    expect(del).toBeDefined();
+    expect(del!.path).toBe('/hierarchy/233');
+    // delete() no longer fetches/PUTs the section, so no mirror guard applies —
+    // the server endpoint handles mirror deletion itself.
+  });
+
+  it('purge() is ALLOWED on a mirrored (inactive) section', async () => {
+    (http.request as ReturnType<typeof vi.fn>).mockImplementation(async (opts: { method: string; path: string }) => {
+      if (opts.method === 'GET' && opts.path === '/hierarchy/233/en') return { ...mirrorSection, status: 2 };
+      if (opts.method === 'POST' && opts.path === '/hierarchy/purge') return undefined;
+      throw new Error(`Unexpected: ${opts.method} ${opts.path}`);
+    });
+    await expect(ref.purge()).resolves.toBeUndefined();
+    const purge = (http.request as ReturnType<typeof vi.fn>).mock.calls
+      .map((c: unknown[]) => c[0] as { method: string; path: string })
+      .find((o) => o.method === 'POST' && o.path === '/hierarchy/purge');
+    expect(purge).toBeDefined();
+  });
+
+  it('move() is ALLOWED on a mirrored section (destination is not a mirror)', async () => {
+    (http.request as ReturnType<typeof vi.fn>).mockImplementation(async (opts: { method: string; path: string }) => {
+      // Destination guard fetch — 500 is a normal (non-mirror) section.
+      if (opts.method === 'GET' && opts.path === '/hierarchy/500/en') return { id: 500, name: 'Dest', parent: 1 };
+      if (opts.method === 'MOVE') return undefined;
+      throw new Error(`Unexpected: ${opts.method} ${opts.path}`);
+    });
+    await expect(ref.move(500)).resolves.toBeUndefined();
+    const moveCall = (http.request as ReturnType<typeof vi.fn>).mock.calls
+      .map((c: unknown[]) => c[0] as { method: string })
+      .find((o) => o.method === 'MOVE');
+    expect(moveCall).toBeDefined();
   });
 });

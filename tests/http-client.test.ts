@@ -113,6 +113,42 @@ describe('HttpClient', () => {
     expect(callArgs[1].headers['Content-Type']).toBeUndefined();
   });
 
+  it('passes an AbortSignal when timeoutMs is set', async () => {
+    mockFetchOk({});
+    await client.request({ method: 'COPY', path: '/dup', timeoutMs: 600000 });
+    const callArgs = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect(callArgs[1].signal).toBeInstanceOf(AbortSignal);
+  });
+
+  it('does not pass a signal when timeoutMs is omitted', async () => {
+    mockFetchOk({});
+    await client.request({ method: 'GET', path: '/x' });
+    const callArgs = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect(callArgs[1].signal).toBeUndefined();
+  });
+
+  it('wraps a body-read failure on a successful response in a T4ApiError', async () => {
+    // Simulates a timeout/stream error mid-body during a long duplicate.
+    (globalThis.fetch as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ok: true,
+      status: 200,
+      statusText: 'OK',
+      text: () => Promise.reject(new Error('terminated: body timeout')),
+    });
+
+    try {
+      await client.request({ method: 'COPY', path: '/dup' });
+      expect.fail('should have thrown');
+    } catch (e) {
+      const err = e as T4ApiError;
+      expect(err).toBeInstanceOf(T4ApiError);
+      expect(err.statusCode).toBe(200);
+      expect(err.statusText).toBe('Response Stream Error');
+      expect(String(err.responseBody)).toMatch(/may have\s+completed the work/);
+      expect((err.cause as Error).message).toBe('terminated: body timeout');
+    }
+  });
+
   it('throws T4ApiError on non-ok response (4xx)', async () => {
     mockFetchError(404, 'Not Found', { error: 'not found' });
     await expect(client.request({ method: 'GET', path: '/missing' }))

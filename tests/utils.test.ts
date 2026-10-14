@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach, beforeAll } from 'vitest';
-import { resolveLanguage, toTimestamp, decodeHtmlEntities, debugWarn, invalidateAllCaches, parseFileSize, normaliseBaseUrl, assertNotBrowser, readPrimaryGroup, readSharedGroups, writePrimaryGroup, writeSharedGroups, assertGroupsValid, assertRequired, assertNotEmptyIfPresent } from '../src/utils.js';
+import { resolveLanguage, toTimestamp, decodeHtmlEntities, debugWarn, invalidateAllCaches, parseFileSize, normaliseBaseUrl, assertNotBrowser, readPrimaryGroup, readSharedGroups, writePrimaryGroup, writeSharedGroups, assertGroupsValid, assertRequired, assertNotEmptyIfPresent, parseDuplicatedSectionId } from '../src/utils.js';
 
 describe('resolveLanguage', () => {
   it('returns override when provided', () => {
@@ -490,5 +490,65 @@ describe('assertNotEmptyIfPresent', () => {
 
   it('throws for a whitespace-only string', () => {
     expect(() => assertNotEmptyIfPresent('   ', 'Content name')).toThrow('Content name cannot be empty');
+  });
+});
+
+describe('parseDuplicatedSectionId', () => {
+  const successBody = [
+    'Home>>samplesite.terminalfour.com>>Home>>Doc Example',
+    'Duplicated section id: 8822',
+    'Updating Server Side Links...',
+    'Server Side Links updated successfully',
+    'DUPLICATE_BRANCH_SUCCESS',
+  ].join('\n');
+
+  it('extracts the new section id from a successful duplicate log', () => {
+    expect(parseDuplicatedSectionId(successBody)).toBe(8822);
+  });
+
+  it('tolerates varied spacing after the colon', () => {
+    const body = 'Duplicated section id:12345\nDUPLICATE_BRANCH_SUCCESS';
+    expect(parseDuplicatedSectionId(body)).toBe(12345);
+  });
+
+  it('throws when the success marker is absent (partial/failed response)', () => {
+    const body = 'Home>>...\nDuplicated section id: 8822\nUpdating Server Side Links...';
+    expect(() => parseDuplicatedSectionId(body)).toThrow(/did not report success/);
+  });
+
+  it('throws when success but no id line is present', () => {
+    const body = 'Updating Server Side Links...\nDUPLICATE_BRANCH_SUCCESS';
+    expect(() => parseDuplicatedSectionId(body)).toThrow(/new section ID could not be determined/);
+  });
+
+  it('handles a non-string body by coercing to string', () => {
+    expect(() => parseDuplicatedSectionId(null)).toThrow(/did not report success/);
+    expect(() => parseDuplicatedSectionId(undefined)).toThrow(/did not report success/);
+  });
+
+  it('requires the marker on the LAST non-empty line, not just anywhere (issue 11)', () => {
+    // A content path/name containing the marker text must NOT be a false positive
+    // when the real terminal line is an error.
+    const body = [
+      'Home>>A section named DUPLICATE_BRANCH_SUCCESS',
+      'ERROR: destination is invalid',
+      'DUPLICATE_BRANCH_ERROR',
+    ].join('\n');
+    expect(() => parseDuplicatedSectionId(body)).toThrow(/did not report success/);
+  });
+
+  it('surfaces the ERROR: line (end of response) in the failure message (issue 5)', () => {
+    const body = [
+      'Home>>samplesite>>Doc',
+      'Home>>samplesite>>Doc>>Child',
+      'ERROR: parent section is read-only',
+      'DUPLICATE_BRANCH_ERROR',
+    ].join('\n');
+    expect(() => parseDuplicatedSectionId(body)).toThrow(/ERROR: parent section is read-only/);
+  });
+
+  it('accepts a trailing blank line after the success marker', () => {
+    const body = successBody + '\n\n';
+    expect(parseDuplicatedSectionId(body)).toBe(8822);
   });
 });

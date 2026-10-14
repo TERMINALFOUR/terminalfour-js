@@ -482,3 +482,175 @@ export class TtlValue<V> {
     this.entry = null;
   }
 }
+
+/**
+ * Minimal structural shape of the HttpClient needed by the mirror guard.
+ * Declared structurally (rather than importing HttpClient) to keep utils.ts a
+ * dependency-free leaf module and avoid a circular import.
+ */
+interface MirrorGuardClient {
+  request<T>(options: { method: string; path: string }): Promise<T>;
+}
+
+/** Raw mirror-relevant fields from GET /hierarchy/{id}/{language}. */
+interface MirrorSectionShape {
+  mirrorOf?: number;
+}
+
+/** Per-client cache of section mirror status, keyed by section ID. */
+const mirrorStatusCache = new WeakMap<
+  object,
+  Map<number, { mirrorOf: number | null; expiresAt: number; epoch: number }>
+>();
+
+/** Normalises a raw `mirrorOf` to the source ID, or `null` when not a mirror. */
+function readMirrorOf(section: MirrorSectionShape | null | undefined): number | null {
+  const value = section?.mirrorOf;
+  return typeof value === 'number' && value > 0 ? value : null;
+}
+
+/**
+ * Records a section's mirror status in the per-client cache. Call this from
+ * paths that have already fetched the section DTO so a later content-path
+ * check can reuse it without an extra request.
+ */
+export function cacheSectionMirrorStatus(
+  client: object,
+  sectionId: number,
+  section: MirrorSectionShape | null | undefined,
+): void {
+  let perClient = mirrorStatusCache.get(client);
+  if (!perClient) {
+    perClient = new Map();
+    mirrorStatusCache.set(client, perClient);
+  }
+  perClient.set(sectionId, {
+    mirrorOf: readMirrorOf(section),
+    expiresAt: Date.now() + DEFAULT_CACHE_TTL,
+    epoch: getCacheEpoch(),
+  });
+}
+
+/** Reads a cached mirror status, or `undefined` when absent/stale. */
+function getCachedMirrorStatus(client: object, sectionId: number): number | null | undefined {
+  const entry = mirrorStatusCache.get(client)?.get(sectionId);
+  if (!entry) return undefined;
+  if (entry.epoch < getCacheEpoch() || Date.now() > entry.expiresAt) {
+    mirrorStatusCache.get(client)?.delete(sectionId);
+    return undefined;
+  }
+  return entry.mirrorOf;
+}
+
+/**
+ * Throws a friendly, read-only error when `section` is a mirror. For callers
+ * that already hold the section DTO (section-level write paths), so no request
+ * is made. Also records the status in the cache for content-path reuse.
+ *
+ * @param scope `'section'` for section-level edits, `'content'` for edits to
+ *   content inside the section — controls the wording.
+ */
+export function assertSectionNotMirrored(
+  client: object,
+  sectionId: number,
+  section: MirrorSectionShape | null | undefined,
+  scope: 'section' | 'content' = 'section',
+): void {
+  cacheSectionMirrorStatus(client, sectionId, section);
+  const mirrorOf = readMirrorOf(section);
+  if (mirrorOf !== null) {
+    throw mirrorError(sectionId, mirrorOf, scope);
+  }
+}
+
+/**
+ * Throws a friendly, read-only error when the section is a mirror, fetching the
+ * section DTO (cached per client, 5-min TTL) when its status isn't already
+ * known. For content write paths that don't otherwise load the section.
+ */
+export async function assertSectionNotMirroredCached(
+  client: MirrorGuardClient,
+  sectionId: number,
+  language: string,
+  scope: 'section' | 'content' = 'content',
+): Promise<void> {
+  let mirrorOf = getCachedMirrorStatus(client, sectionId);
+  if (mirrorOf === undefined) {
+    const section = await client.request<MirrorSectionShape>({
+      method: 'GET',
+      path: `/hierarchy/${sectionId}/${language}`,
+    });
+    cacheSectionMirrorStatus(client, sectionId, section);
+    mirrorOf = readMirrorOf(section);
+  }
+  if (mirrorOf !== null) {
+    throw mirrorError(sectionId, mirrorOf, scope);
+  }
+}
+
+/** Builds the read-only mirror error. */
+function mirrorError(sectionId: number, mirrorOf: number, scope: 'section' | 'content'): Error {
+  if (scope === 'content') {
+    return new Error(
+      `Cannot modify content in section ${sectionId}: it is a mirror of section ${mirrorOf} ` +
+      `and is read-only. Edit the content in the source section instead.`,
+    );
+  }
+  return new Error(
+    `Cannot modify section ${sectionId}: it is a mirror of section ${mirrorOf} ` +
+    `and is read-only. Edit the source section instead.`,
+  );
+}
+
+/**
+ * Parses the plain-text response body returned by the section duplicate
+ * endpoint (`COPY /hierarchy/{id}/{language}`) to extract the new branch's
+ * root section ID.
+ *
+ * ⚠️ FRAGILE — depends on T4's human-readable progress log format, not a
+ * structured field. The endpoint returns newline-delimited text (mislabeled
+ * `application/json`): one `<section path>` line per copied section, then a
+ * terminal marker line — `DUPLICATE_BRANCH_SUCCESS` on success, or an `ERROR:…`
+ * line followed by `DUPLICATE_BRANCH_ERROR` on failure. The new root id is on a
+ * `Duplicated section id: <n>` line. If a future T4 version changes the markers
+ * or that line's wording, this parser must be updated. See API_NUANCES.
+ *
+ * Error reporting notes (review issues 5 & 11):
+ * - The success check looks at the **last non-empty line**, not anywhere in the
+ *   body — section path lines contain user-entered names, so a stray
+ *   "DUPLICATE_BRANCH_SUCCESS" in a name couldn't produce a false positive, and
+ *   a marker written mid-stream before a rollback wouldn't be mistaken for a
+ *   committed success.
+ * - On failure the error message surfaces the **end** of the response (where
+ *   the real `ERROR:` line lives), not the start (which is just path lines).
+ */
+export function parseDuplicatedSectionId(responseBody: unknown): number {
+  const text = typeof responseBody === 'string'
+    ? responseBody
+    : (responseBody == null ? '' : String(responseBody));
+
+  const lines = text.split('\n').map((l) => l.trim()).filter((l) => l.length > 0);
+  const lastLine = lines[lines.length - 1] ?? '';
+
+  if (lastLine !== 'DUPLICATE_BRANCH_SUCCESS') {
+    // Prefer the explicit ERROR: line if present; otherwise show the tail.
+    const errorLine = [...lines].reverse().find((l) => l.startsWith('ERROR:'));
+    const detail = errorLine ?? text.slice(-500);
+    throw new Error(
+      'Section duplication did not report success. The server response did not end with the ' +
+      'expected completion marker, so the operation may have failed or been interrupted. ' +
+      `Server detail: ${detail}`,
+    );
+  }
+
+  const match = text.match(/Duplicated section id:\s*(\d+)/);
+  if (!match) {
+    throw new Error(
+      'Section duplication reported success but the new section ID could not be determined ' +
+      'from the server response. The duplicate likely exists; locate it under the destination section. ' +
+      `Response (tail): ${text.slice(-500)}`,
+    );
+  }
+
+  return parseInt(match[1], 10);
+}

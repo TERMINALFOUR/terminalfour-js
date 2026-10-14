@@ -5,7 +5,7 @@
 ## Contents
 
 - [Read and update a section](#read-and-update-a-section)
-- [Create, delete, purge, or move](#create-delete-purge-or-move)
+- [Create, delete, purge, move, or mirror](#create-delete-purge-move-or-mirror)
 - [Navigate the section tree](#navigate-the-section-tree)
 - [Manage section configuration](#manage-section-configuration)
 - [Publish](#publish)
@@ -32,6 +32,8 @@ const section = await t4.section(233).get();
 | `pathMembers` | `number[]` | no | Section IDs in the path |
 | `lastModified` | `Date \| null` | no | Last modification date |
 | `accessControl` | `{ active, enabled }` | no | Access control state |
+| `mirrorOf` | `number \| null` | no | Source section ID when this section is a mirror; `null` otherwise |
+| `mirrorOfPath` | `string \| null` | no | Breadcrumb of the mirror source; `null` when not a mirror |
 | `customFields` | `Record<string, unknown> \| null` | yes | Resolved metadata content fields, or `null` |
 
 ### Direct update
@@ -64,7 +66,7 @@ await section.save();
 
 The SDK will throw when no metadata content type is configured on the instance and you attempt add customFields.
 
-## Create, delete, purge, or move
+## Create, delete, purge, move, or mirror
 
 ### Create a child section
 
@@ -84,10 +86,85 @@ When the instance has a section metadata content type configured, `addSection()`
 ### Delete, purge, or move
 
 ```typescript
-await t4.section(500).delete();   // soft delete: sets status to inactive
+await t4.section(500).delete();   // soft delete (leaves the section inactive)
 await t4.section(500).purge();    // permanent removal; section must be inactive first
 await t4.section(500).move(233);  // move under section 233
 ```
+
+`delete()` uses Terminalfour's dedicated delete endpoint, so the server applies its own rules: it checks your permissions and deletes every mirror of the section too. By default it refuses when other content links to the section; pass `{ mandatory: true }` to force it:
+
+```typescript
+await t4.section(500).delete({ mandatory: true });
+```
+
+`delete()` removes the whole section across **all languages** — the endpoint is not language-scoped, so there is no `language` option (passing one would be misleading).
+
+`move()` refuses when the destination is a mirror (a read-only section), since content placed there couldn't be edited or moved back out.
+
+### Mirror a branch
+
+Mirror this section's entire branch under a destination parent. A mirror is a read-only reflection of the source — the mirrored sections and their content stay in sync with the source.
+
+```typescript
+await t4.section(8817).mirror(8331); // mirror section 8817's branch under section 8331
+```
+
+The second argument retains link targets if needed:
+
+```typescript
+await t4.section(8817).mirror(8331, {
+  retainLinkTargets: true,   // keep section/content link targets; default false
+});
+```
+
+Whether access-control and section-metadata content is mirrored is governed by instance configuration (`hierarchy.mirrorAccessControlContent`, `hierarchy.mirrorSectionMetaData`), not by this call.
+
+Mirroring must be enabled on the T4 instance. The SDK checks this first and throws a clear error if it is disabled, before attempting the operation. It also refuses when the destination is itself a mirror. Mirroring always applies to the whole branch below the source section.
+
+#### Mirrored sections are read-only
+
+A mirror reflects its source, so the SDK blocks edits to a mirrored section and its content, throwing an error that names the source section:
+
+```typescript
+await t4.section(8820).update({ name: 'x' });
+// Error: Cannot modify section 8820: it is a mirror of section 8817 and is read-only.
+//        Edit the source section instead.
+```
+
+Blocked on a mirror: `update`, `addSection`, `setPageLayouts`, `setMetaDatas`, `setEditRights`, `removeEditRights`, `setContentTypes`, `removeContentTypes`, `SectionItem.save()`, and all content writes in the section (`content.create`/`update`/`delete`/`purge`/`approveAll`, and a content item's `save`/`approve`/`move`/`duplicate`).
+
+Still allowed: `delete()` and `purge()` (how you remove a mirror), `move()`, `publish()`, and all reads. Detect a mirror via `mirrorOf` (see [Read and update a section](#read-and-update-a-section)).
+
+The same read-only rule applies to the **destination** of a `move`, `mirror`, or `duplicate`: the SDK refuses to place a section or content into a mirror, since it would then be unremovable through these same guards.
+
+### Duplicate a branch
+
+Duplicate this section's entire branch under a destination parent. Unlike mirroring, this creates independent copies. The call returns the new branch root as a `SectionItem`.
+
+```typescript
+const copy = await t4.section(236).duplicate(794);
+console.log(copy.id); // the new branch's root section ID
+```
+
+The second argument controls what is copied:
+
+```typescript
+await t4.section(236).duplicate(794, {
+  content: 'duplicate',          // 'ignore' (default, structure only), 'duplicate', or 'mirror'
+  copyPageLayouts: true,          // default true
+  copyUserAccess: true,           // default true
+  copyContentTypeAccess: true,    // default true
+  retainLinkTargets: true,        // keep section/content link targets; default false
+  language: 'fr',                 // optional; defaults to the client language
+  timeoutMs: 15 * 60 * 1000,      // optional; defaults to 10 minutes
+});
+```
+
+All options live in a single object (`DuplicateOptions`), including `language` and `timeoutMs`. `content` chooses how content is handled: `'ignore'` copies structure only, `'duplicate'` copies the content, `'mirror'` mirrors it.
+
+> Duplicating a large branch can take some time — especially with `content: 'duplicate'` — because the server completes the whole copy before responding. The request times out after `timeoutMs` (10 minutes by default; raise it for very large branches). If it times out, the duplicate may have completed server-side regardless, so check the destination before retrying to avoid creating a second copy.
+
+> `duplicate()` throws if the source section is a mirror, or if the destination is a mirror.
 
 ## Navigate the section tree
 
@@ -130,6 +207,28 @@ If the array omits a child that is present, includes an unknown ID, or repeats o
 > **Auto-sorted parents and pinned children.** A parent can sort its children automatically (alphabetically, by date). You can still pin a few children to the top or bottom and order those manually. The SDK lets you reorder pinned children and children of manually-sorted parents. If you try a move the parent won't allow (a non-pinned child in an auto-sorted parent, or a pinned child outside its block), Terminalfour rejects it and the SDK throws a clear error.
 >
 > The list reflects the children in the requested language. For a parent that mixes languages, reorder one language at a time.
+
+> A mirrored section is read-only, so reordering its children (`setOrder()`/`reorder()`) throws when the parent section is a mirror.
+
+### Find mirror sections
+
+When a section is the source of one or more mirrors, `mirrors()` returns a `SectionRef` for each section that mirrors it:
+
+```typescript
+const mirrors = await t4.section(1413).mirrors();
+for (const ref of mirrors) {
+  const section = await ref.get();
+  console.log(section.id, section.path);
+}
+```
+
+A section can be mirrored to several places, so this is always an array. If the section is not a mirror source, `mirrors()` throws:
+
+```
+Section 1413 is not the source of any mirror (sourceOfMirror is false).
+```
+
+(Detect a source without calling `mirrors()` by reading `sourceOfMirror` — not currently surfaced on `SectionItem`; `mirrors()` checks it internally.)
 
 ### Full tree or subtree
 

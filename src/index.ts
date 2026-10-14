@@ -36,7 +36,7 @@ export type { HandlebarsItemSummary, HelperSummary, PartialSummary, Helper, Part
 
 // Section reference
 export { SectionRef } from './section-ref.js';
-export type { SectionTreeNode } from './section-ref.js';
+export type { SectionTreeNode, DuplicateOptions } from './section-ref.js';
 export { SiteStructure } from './site-structure.js';
 
 // Media category reference

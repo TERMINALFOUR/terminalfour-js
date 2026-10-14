@@ -1,5 +1,5 @@
 import { HttpClient } from '../http-client.js';
-import { mapStatus, STATUS_CODES, assertRequired } from '../utils.js';
+import { mapStatus, STATUS_CODES, assertRequired, assertSectionNotMirrored } from '../utils.js';
 import { ApiSectionDTO } from '../types.js';
 import { ContentResource } from '../resources/content-resource.js';
 import { MediaCreateFn } from '../element-resolver.js';
@@ -14,6 +14,10 @@ export class SectionItem {
   readonly pathMembers: number[];
   readonly lastModified: Date | null;
   readonly accessControl: { active: boolean; enabled: boolean };
+  /** Source section ID when this section is a mirror of another; `null` when it is not a mirror. */
+  readonly mirrorOf: number | null;
+  /** Breadcrumb path of the mirror source (`»`-separated); `null` when this section is not a mirror. */
+  readonly mirrorOfPath: string | null;
   name: string;
   show: boolean;
   status: string;
@@ -46,6 +50,10 @@ export class SectionItem {
       active: ac?.active ?? false,
       enabled: ac?.enabled ?? false,
     };
+    this.mirrorOf = raw.mirrorOf && raw.mirrorOf > 0 ? raw.mirrorOf : null;
+    this.mirrorOfPath = this.mirrorOf !== null && raw.mirrorOfPath
+      ? raw.mirrorOfPath.replace(/&raquo;/g, '\u00BB').trim()
+      : null;
     this.name = raw.name;
     this.show = raw.show ?? true;
     this.status = mapStatus(Number(raw.status) || 0);
@@ -63,6 +71,8 @@ export class SectionItem {
   /** Persists current property values to the server via PUT. */
   async save(): Promise<void> {
     assertRequired(this.name, 'Section name');
+    // A mirrored section is read-only; block saves (uses the in-memory DTO, no fetch).
+    assertSectionNotMirrored(this._httpClient, this.id, this._rawData);
 
     const statusCode = STATUS_CODES[this.status] ?? Number(this._rawData.status) ?? 0;
 
