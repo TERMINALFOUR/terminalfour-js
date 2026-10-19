@@ -130,36 +130,11 @@ export class HttpClient {
       });
     }
 
-    // Reading the body can itself fail — e.g. a timeout or dropped connection
-    // during a long, intermittently-silent streamed response (section
-    // duplication). Wrap it so callers get a T4ApiError, not a raw undici
-    // error, and so the message warns that the server-side operation may still
-    // have completed (retrying could duplicate work).
     let text: string;
     try {
       text = await response.text();
     } catch (error) {
-      // statusCode is 0, not response.status: the headers' status (often 200)
-      // is not a usable HTTP outcome once the body read fails, and a thrown
-      // error must never carry a 2xx status (callers branching on statusCode
-      // can't tell a "failed 200" from a real success). This matches the
-      // fetch-rejection (Network Error) path above. statusText stays
-      // 'Response Stream Error' and bodyReadFailed is set so callers can tell
-      // this apart from a never-connected network error — the operation may
-      // have completed server-side, so a blind retry could duplicate work.
-      throw new T4ApiError({
-        statusCode: 0,
-        statusText: 'Response Stream Error',
-        bodyReadFailed: true,
-        responseBody:
-          'The request succeeded but reading the response body failed ' +
-          `(${error instanceof Error ? error.message : String(error)}). ` +
-          'For long operations such as section duplication the server may have ' +
-          'completed the work regardless — check before retrying to avoid duplicates.',
-        requestUrl: url,
-        requestMethod: options.method,
-        cause: error instanceof Error ? error : undefined,
-      });
+      throw this.bodyReadError(error, url, options.method, response.status);
     }
 
     if (!text) return undefined as T;
@@ -170,5 +145,42 @@ export class HttpClient {
       debugWarn(`Response from ${options.method} ${options.path} is not valid JSON, returning raw text`);
       return text as T;
     }
+  }
+
+  /**
+   * Builds the error thrown when `fetch` returned response headers but reading
+   * the response body then failed — e.g. a timeout or dropped connection during
+   * a long, intermittently-silent streamed response such as section duplication.
+   *
+   * This is a transport-level failure with no usable HTTP outcome, so it is
+   * reported like the `fetch`-rejection (`Network Error`) path rather than the
+   * server's header status:
+   *
+   * - `statusCode` is `0`, never `response.status`. The header status (often
+   *   `200`) must not surface on a thrown error, or a caller branching on
+   *   `statusCode` cannot tell a "failed 200" from a real success.
+   * - `statusText` is `'Response Stream Error'`, distinct from the
+   *   fetch-rejection path's `'Network Error'`.
+   * - `bodyReadFailed` is `true` so callers can tell this apart from a
+   *   never-connected network error. Because the headers already arrived, the
+   *   server-side operation may have completed, so a blind retry could
+   *   duplicate work — the `responseBody` message warns about this and records
+   *   the observed header status (`headerStatus`) for diagnostics.
+   */
+  private bodyReadError(error: unknown, url: string, method: string, headerStatus: number): T4ApiError {
+    return new T4ApiError({
+      statusCode: 0,
+      statusText: 'Response Stream Error',
+      bodyReadFailed: true,
+      responseBody:
+        'The request succeeded but reading the response body failed ' +
+        `(${error instanceof Error ? error.message : String(error)}). ` +
+        `The server responded with status ${headerStatus} before the body read failed, so ` +
+        'for long operations such as section duplication the server may have ' +
+        'completed the work regardless — check before retrying to avoid duplicates.',
+      requestUrl: url,
+      requestMethod: method,
+      cause: error instanceof Error ? error : undefined,
+    });
   }
 }

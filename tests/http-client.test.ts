@@ -149,6 +149,9 @@ describe('HttpClient', () => {
       expect(err.statusText).toBe('Response Stream Error');
       expect(err.bodyReadFailed).toBe(true);
       expect(String(err.responseBody)).toMatch(/may have\s+completed the work/);
+      // The observed header status (200 here) is recorded in the message for
+      // diagnostics, even though statusCode is deliberately 0 (issue #39 review).
+      expect(String(err.responseBody)).toMatch(/status 200/);
       expect((err.cause as Error).message).toBe('terminated: body timeout');
     }
   });
