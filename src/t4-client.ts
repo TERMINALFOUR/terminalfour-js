@@ -17,7 +17,7 @@ import { NavigationResource } from './resources/navigation-resource.js';
 import { Handlebars } from './handlebars.js';
 import { ContentCache } from './content-cache.js';
 import { invalidateAllCaches, normaliseBaseUrl, assertNotBrowser } from './utils.js';
-import { buildUserAgent, resolveSdkVersion, sdkModuleDir } from './version.js';
+import { buildUserAgent, getSdkVersion } from './version.js';
 
 /**
  * Main entry point for the T4 SDK.
@@ -56,7 +56,7 @@ export class T4Client {
 
     const baseUrl = normaliseBaseUrl(config.baseUrl);
 
-    const userAgent = buildUserAgent(resolveSdkVersion(sdkModuleDir()), config.userAgent);
+    const userAgent = buildUserAgent(getSdkVersion(), config.userAgent);
 
     this.httpClient = new HttpClient(baseUrl, config.apiToken, config.concurrency, userAgent);
     this.defaultLanguage = config.language ?? 'en';

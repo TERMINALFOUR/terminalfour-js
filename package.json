@@ -51,8 +51,12 @@
   },
   "scripts": {
     "clean": "rm -rf dist",
+    "generate:version": "node scripts/generate-version.mjs",
+    "prebuild": "npm run generate:version",
     "build": "npm run clean && tsc -p tsconfig.esm.json && tsc -p tsconfig.cjs.json && echo '{\"type\":\"commonjs\"}' > dist/cjs/package.json",
+    "pretest": "npm run generate:version",
     "test": "vitest --run",
+    "prepare": "npm run generate:version",
     "prepublishOnly": "npm run test && npm run build"
   },
   "devDependencies": {

@@ -1,13 +1,16 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
+import { execFileSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
-import { mkdtempSync, writeFileSync, mkdirSync, rmSync } from 'node:fs';
-import { join } from 'node:path';
 import {
-  buildUserAgent,
-  resolveSdkVersion,
-  SDK_PRODUCT,
-  UNKNOWN_VERSION,
-} from '../src/version.js';
+  mkdtempSync,
+  writeFileSync,
+  mkdirSync,
+  rmSync,
+  readFileSync,
+  copyFileSync,
+} from 'node:fs';
+import { join } from 'node:path';
+import { buildUserAgent, SDK_PRODUCT, UNKNOWN_VERSION } from '../src/version.js';
 
 describe('buildUserAgent', () => {
   it('returns the SDK product token with version when no identifier is given', () => {
@@ -43,68 +46,73 @@ describe('buildUserAgent', () => {
   });
 });
 
-describe('resolveSdkVersion', () => {
+describe('getSdkVersion', () => {
+  afterEach(() => {
+    vi.resetModules();
+    vi.restoreAllMocks();
+  });
+
+  it('returns the baked-in SDK_VERSION from the generated module', async () => {
+    vi.resetModules();
+    vi.doMock('../src/generated-version.js', () => ({ SDK_VERSION: '4.5.6' }));
+    const { getSdkVersion } = await import('../src/version.js');
+    expect(getSdkVersion()).toBe('4.5.6');
+    vi.doUnmock('../src/generated-version.js');
+  });
+
+  it('falls back to UNKNOWN_VERSION when the baked-in value is empty', async () => {
+    vi.resetModules();
+    vi.doMock('../src/generated-version.js', () => ({ SDK_VERSION: '' }));
+    const { getSdkVersion } = await import('../src/version.js');
+    expect(getSdkVersion()).toBe(UNKNOWN_VERSION);
+    vi.doUnmock('../src/generated-version.js');
+  });
+
+  it('matches the version in package.json (the baked-in value is in sync)', async () => {
+    const pkg = JSON.parse(
+      readFileSync(new URL('../package.json', import.meta.url), 'utf8'),
+    ) as { version: string };
+    const { getSdkVersion } = await import('../src/version.js');
+    expect(getSdkVersion()).toBe(pkg.version);
+  });
+});
+
+describe('generate-version script', () => {
   const created: string[] = [];
+  const scriptPath = new URL('../scripts/generate-version.mjs', import.meta.url).pathname;
 
   afterEach(() => {
-    vi.restoreAllMocks();
     for (const dir of created.splice(0)) {
       rmSync(dir, { recursive: true, force: true });
     }
   });
 
-  function tempRoot(): string {
-    const dir = mkdtempSync(join(tmpdir(), 't4-version-'));
-    created.push(dir);
-    return dir;
+  function tempPackage(version: unknown): string {
+    const root = mkdtempSync(join(tmpdir(), 't4-genver-'));
+    created.push(root);
+    mkdirSync(join(root, 'src'), { recursive: true });
+    mkdirSync(join(root, 'scripts'), { recursive: true });
+    copyFileSync(scriptPath, join(root, 'scripts', 'generate-version.mjs'));
+    writeFileSync(
+      join(root, 'package.json'),
+      JSON.stringify({ name: '@terminalfour/terminalfour-js', version }),
+    );
+    return root;
   }
 
-  it('reads the version from a package.json in the module directory', () => {
-    const root = tempRoot();
-    writeFileSync(
-      join(root, 'package.json'),
-      JSON.stringify({ name: '@terminalfour/terminalfour-js', version: '3.4.5' }),
-    );
-    expect(resolveSdkVersion(root)).toBe('3.4.5');
+  it('writes src/generated-version.ts exporting SDK_VERSION from package.json', () => {
+    const root = tempPackage('3.1.4');
+    execFileSync('node', [join(root, 'scripts', 'generate-version.mjs')]);
+    const generated = readFileSync(join(root, 'src', 'generated-version.ts'), 'utf8');
+    expect(generated).toContain("export const SDK_VERSION = '3.1.4';");
   });
 
-  it('walks up parent directories to find package.json', () => {
-    const root = tempRoot();
-    writeFileSync(
-      join(root, 'package.json'),
-      JSON.stringify({ name: '@terminalfour/terminalfour-js', version: '7.0.0' }),
-    );
-    const nested = join(root, 'dist', 'esm');
-    mkdirSync(nested, { recursive: true });
-    expect(resolveSdkVersion(nested)).toBe('7.0.0');
-  });
-
-  it('skips package.json files belonging to other packages', () => {
-    const root = tempRoot();
-    const nested = join(root, 'dist', 'esm');
-    mkdirSync(nested, { recursive: true });
-    // A different package.json closer to the module should be ignored
-    writeFileSync(
-      join(nested, 'package.json'),
-      JSON.stringify({ name: 'something-else', version: '0.0.1' }),
-    );
-    writeFileSync(
-      join(root, 'package.json'),
-      JSON.stringify({ name: '@terminalfour/terminalfour-js', version: '2.2.2' }),
-    );
-    expect(resolveSdkVersion(nested)).toBe('2.2.2');
-  });
-
-  it('falls back to UNKNOWN_VERSION when no package.json is found', () => {
-    const root = tempRoot();
-    const nested = join(root, 'a', 'b');
-    mkdirSync(nested, { recursive: true });
-    expect(resolveSdkVersion(nested, 2)).toBe(UNKNOWN_VERSION);
-  });
-
-  it('falls back to UNKNOWN_VERSION when package.json is malformed', () => {
-    const root = tempRoot();
-    writeFileSync(join(root, 'package.json'), '{ not valid json');
-    expect(resolveSdkVersion(root, 0)).toBe(UNKNOWN_VERSION);
+  it('throws when package.json has no valid version', () => {
+    const root = tempPackage(undefined);
+    expect(() =>
+      execFileSync('node', [join(root, 'scripts', 'generate-version.mjs')], {
+        stdio: 'pipe',
+      }),
+    ).toThrow();
   });
 });
