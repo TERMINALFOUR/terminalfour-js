@@ -26,6 +26,7 @@ The Terminalfour REST API is powerful but verbose. Updating content can require 
 await t4.section(482).content.create({
   type: 44,
   name: 'New Article',
+  // Content gets created as 'pending' by default matching the T4 UI. Pass status: 'approved' if you want to create in an approved state.
   fields: {
     Title: 'Breaking News',
     Category: 'Featured',        // list value by name, not "listId:itemId"
