@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach, beforeAll } from 'vitest';
-import { resolveLanguage, toTimestamp, decodeHtmlEntities, debugWarn, invalidateAllCaches, parseFileSize, normaliseBaseUrl, assertNotBrowser, readPrimaryGroup, readSharedGroups, writePrimaryGroup, writeSharedGroups, assertGroupsValid, assertRequired, assertNotEmptyIfPresent, parseDuplicatedSectionId } from '../src/utils.js';
+import { resolveLanguage, toTimestamp, decodeHtmlEntities, debugWarn, invalidateAllCaches, parseFileSize, normaliseBaseUrl, assertNotBrowser, readPrimaryGroup, readSharedGroups, writePrimaryGroup, writeSharedGroups, assertGroupsValid, assertRequired, assertNotEmptyIfPresent, parseDuplicatedSectionId, defaultMaxSizeForType, DEFAULT_MAX_SIZE } from '../src/utils.js';
 
 describe('resolveLanguage', () => {
   it('returns override when provided', () => {
@@ -550,5 +550,39 @@ describe('parseDuplicatedSectionId', () => {
   it('accepts a trailing blank line after the success marker', () => {
     const body = successBody + '\n\n';
     expect(parseDuplicatedSectionId(body)).toBe(8822);
+  });
+});
+
+describe('defaultMaxSizeForType', () => {
+  it('returns 240 for Plain Text (type 1)', () => {
+    expect(defaultMaxSizeForType(1)).toBe(240);
+  });
+
+  it('returns 10000 for Image (type 2)', () => {
+    expect(defaultMaxSizeForType(2)).toBe(10000);
+  });
+
+  it('returns 5000 for HTML (type 3)', () => {
+    expect(defaultMaxSizeForType(3)).toBe(5000);
+  });
+
+  it('returns 10000 for File (type 4)', () => {
+    expect(defaultMaxSizeForType(4)).toBe(10000);
+  });
+
+  it('falls back to 80 for every other type', () => {
+    expect(defaultMaxSizeForType(5)).toBe(80);   // Date
+    expect(defaultMaxSizeForType(7)).toBe(80);   // Select Box
+    expect(defaultMaxSizeForType(13)).toBe(80);  // Whole Number
+    expect(defaultMaxSizeForType(19)).toBe(80);  // Repeater
+  });
+
+  it('falls back to 80 for an unknown type id', () => {
+    expect(defaultMaxSizeForType(999)).toBe(80);
+    expect(defaultMaxSizeForType(0)).toBe(80);
+  });
+
+  it('exposes the fallback default as DEFAULT_MAX_SIZE (80)', () => {
+    expect(DEFAULT_MAX_SIZE).toBe(80);
   });
 });

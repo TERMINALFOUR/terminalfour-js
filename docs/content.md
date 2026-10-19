@@ -75,6 +75,21 @@ const article = await t4.section(482).content.create({
 
 The SDK maps field names to element keys, resolves list values to IDs, uploads files, creates link records, and builds the full request body. An unknown field name produces an error that lists the valid fields.
 
+### Default status is `pending`
+
+When you create content **without** a `status`, the SDK saves it as `'pending'`, not approved. This mirrors Terminalfour's own approval workflow: content saved in the UI without explicit approval is held as pending for review and is **not published** until it is approved. To create approved, publishable content directly, set `status: 'approved'`:
+
+```typescript
+await t4.section(482).content.create({
+  type: 44,
+  name: 'My Article',
+  status: 'approved',   // skip the pending state and make it live-ready
+  fields: { Title: 'Breaking News' },
+});
+```
+
+The same default applies to `content.update()` and a content item's `save()` — see [Update content](#update-content). Status values map as `'approved'` → live, `'pending'` → awaiting approval (default), `'draft'` → work in progress, `'inactive'` → disabled.
+
 Before creating or updating content, inspect the content type when you need its field constraints:
 
 ```typescript
@@ -101,6 +116,8 @@ await t4.section(482).content.update(9132, {
 });
 ```
 
+> **Omitting `status` resets the item to `pending`.** `update()` does not preserve the item's current status — like T4's UI, saving without explicit approval moves the item back to pending (awaiting approval). Pass `status: 'approved'` whenever the item must stay approved after the update.
+
 ### Mutable item
 
 Retrieve an item when you need to inspect or change several current values:
@@ -124,7 +141,7 @@ await article.save();
 
 Both styles are tracked and validated the same way. Every field you assign is persisted on `save()`, and assigning a field that doesn't exist on the content type throws `Unknown field "X" on this content type. Valid fields are: ...` — exactly as `content.update()` and single-field mutation do.
 
-`save()` defaults the status to `'pending'` to match T4's approval workflow. Set `item.status = 'approved'` before saving if the item must remain approved.
+`save()` defaults the status to `'pending'` to match T4's approval workflow, so an item you don't explicitly keep approved is held for review and is **not published**. Set `item.status = 'approved'` before saving (or use `approve()`) if the item must remain approved.
 
 > Content in a mirrored section is read-only. `create`, `update`, `delete`, `purge`, `approveAll`, and a content item's `save`, `approve`, `move`, and `duplicate` throw an error naming the source section when the section is a mirror. Edit the content in the source section instead.
 
