@@ -142,7 +142,7 @@ describe('ContentTypeResource', () => {
 
     expect(ct.fields['Content'].editor).toBe('TinyMCE');
 
-    await ct.save();
+    await ct.save({ wait: false });
 
     const putCall = (http.request as ReturnType<typeof vi.fn>).mock.calls.find(
       (c: unknown[]) => (c[0] as { method: string }).method === 'PUT',
@@ -212,7 +212,7 @@ describe('ContentTypeResource', () => {
 
     // Change editor
     ct.fields['Body'].editor = 'TinyMCE';
-    await ct.save();
+    await ct.save({ wait: false });
 
     const putCall = (http.request as ReturnType<typeof vi.fn>).mock.calls.find(
       (c: unknown[]) => (c[0] as { method: string }).method === 'PUT',
@@ -244,7 +244,7 @@ describe('ContentTypeResource', () => {
 
     // Remove editor
     ct.fields['Body'].editor = null;
-    await ct.save();
+    await ct.save({ wait: false });
 
     const putCall = (http.request as ReturnType<typeof vi.fn>).mock.calls.find(
       (c: unknown[]) => (c[0] as { method: string }).method === 'PUT',
@@ -275,7 +275,7 @@ describe('ContentTypeResource', () => {
       elements: [
         { name: 'Body', type: 'HTML', editor: 'TinyMCE' },
       ],
-    });
+    }, { wait: false });
 
     // Verify the POST body included editor config
     const postCall = (http.request as ReturnType<typeof vi.fn>).mock.calls.find(
@@ -598,7 +598,7 @@ describe('ContentTypeResource', () => {
     ct.minUserLevel = 'moderator';
     ct.workflow = 5;
     ct.directEdit = false;
-    await ct.save();
+    await ct.save({ wait: false });
 
     const putCall = (http.request as ReturnType<typeof vi.fn>).mock.calls.find(
       (c: unknown[]) => (c[0] as { method: string }).method === 'PUT',
@@ -632,7 +632,7 @@ describe('ContentTypeResource', () => {
 
     ct.primaryGroup = 35;
     ct.sharedGroups = [40];
-    await ct.save();
+    await ct.save({ wait: false });
 
     const putCall = (http.request as ReturnType<typeof vi.fn>).mock.calls.find(
       (c: unknown[]) => (c[0] as { method: string }).method === 'PUT',
@@ -805,7 +805,7 @@ describe('ContentTypeResource', () => {
       throw new Error(`Unexpected: ${opts.method} ${opts.path}`);
     });
 
-    const ct = await resource.update(343, { removeFields: ['Body'] });
+    const ct = await resource.update(343, { removeFields: ['Body'] }, { wait: false });
 
     expect(ct.fields['Body']).toBeUndefined();
     expect(ct.fields['Name']).toBeDefined();
@@ -964,7 +964,7 @@ describe('ContentTypeResource', () => {
     ct.fields['Repeater'].config!.minRepeats = 1;
     ct.fields['Repeater'].config!.maxRepeats = 100;
 
-    await ct.save();
+    await ct.save({ wait: false });
 
     const putCall = (http.request as ReturnType<typeof vi.fn>).mock.calls.find(
       (c: unknown[]) => (c[0] as { method: string }).method === 'PUT',
@@ -1010,7 +1010,7 @@ describe('ContentTypeResource', () => {
 
     // Modify a property and save
     ct.fields['Body'].description = 'Updated body';
-    await ct.save();
+    await ct.save({ wait: false });
 
     const putCall = (http.request as ReturnType<typeof vi.fn>).mock.calls.find(
       (c: unknown[]) => (c[0] as { method: string }).method === 'PUT',
@@ -1037,7 +1037,7 @@ describe('ContentTypeResource', () => {
     ct.removeField('Name');
     expect(ct.fields['Name']).toBeUndefined();
 
-    await ct.save();
+    await ct.save({ wait: false });
 
     const putCall = (http.request as ReturnType<typeof vi.fn>).mock.calls.find(
       (c: unknown[]) => (c[0] as { method: string }).method === 'PUT',
@@ -1151,7 +1151,7 @@ describe('ContentTypeResource', () => {
 
       const ct = await resource.get(900);
       await ct.addField({ name: 'Extra', type: 'Plain Text', maxSize: 100 });
-      await ct.save();
+      await ct.save({ wait: false });
 
       const putCall = (http.request as ReturnType<typeof vi.fn>).mock.calls.find(
         (c: unknown[]) => (c[0] as { method: string }).method === 'PUT',
@@ -1174,7 +1174,7 @@ describe('ContentTypeResource', () => {
       ct.description = 'Updated content type description';
       ct.fields['Title'].maxSize = 500;
       ct.fields['Title'].description = 'Updated element description';
-      await ct.save();
+      await ct.save({ wait: false });
 
       const putCall = (http.request as ReturnType<typeof vi.fn>).mock.calls.find(
         (c: unknown[]) => (c[0] as { method: string }).method === 'PUT',
@@ -1201,7 +1201,7 @@ describe('ContentTypeResource', () => {
 
       const ct = await resource.get(75);
       ct.removeField('Title');
-      await ct.save();
+      await ct.save({ wait: false });
 
       const putCall = (http.request as ReturnType<typeof vi.fn>).mock.calls.find(
         (c: unknown[]) => (c[0] as { method: string }).method === 'PUT',
@@ -1225,7 +1225,7 @@ describe('ContentTypeResource', () => {
 
       const ct = await resource.get(420);
       ct.fields['Title'].name = 'Headline';
-      await ct.save();
+      await ct.save({ wait: false });
 
       const putCall = (http.request as ReturnType<typeof vi.fn>).mock.calls.find(
         (c: unknown[]) => (c[0] as { method: string }).method === 'PUT',
@@ -1280,7 +1280,7 @@ describe('ContentTypeResource', () => {
 
       const ct = await resource.get(901);
       ct.removeField('Title');
-      await ct.save();
+      await ct.save({ wait: false });
 
       // The exemption endpoints must NOT be called for a non-system type
       const configCall = (http.request as ReturnType<typeof vi.fn>).mock.calls.find(
@@ -1325,7 +1325,7 @@ describe('ContentTypeResource', () => {
         throw new Error(`Unexpected: ${opts.method} ${opts.path}`);
       });
 
-      const ct = await resource.update(75, { updateFields: [{ name: 'Title', newName: 'Headline' }] });
+      const ct = await resource.update(75, { updateFields: [{ name: 'Title', newName: 'Headline' }] }, { wait: false });
 
       expect(ct.fields['Headline']).toBeDefined();
     });
@@ -1351,7 +1351,7 @@ describe('ContentTypeResource', () => {
     expect(ct.fields['Summary'].maxSize).toBe(200);
     expect(ct.fields['Summary'].required).toBe(true);
 
-    await ct.save();
+    await ct.save({ wait: false });
 
     const putCall = (http.request as ReturnType<typeof vi.fn>).mock.calls.find(
       (c: unknown[]) => (c[0] as { method: string }).method === 'PUT',
@@ -1458,7 +1458,7 @@ describe('ContentTypeResource', () => {
       elements: [
         { name: 'Body', type: 'HTML', maxSize: 500, required: true },
       ],
-    });
+    }, { wait: false });
 
     expect(ct.id).toBe(412);
     expect(ct.name).toBe('New CT');
@@ -1516,7 +1516,7 @@ describe('ContentTypeResource', () => {
       throw new Error(`Unexpected: ${opts.method} ${opts.path}`);
     });
 
-    await resource.create({ name: 'Test', elements: [{ name: 'Category', type: 'Select Box', listId: 71 }] });
+    await resource.create({ name: 'Test', elements: [{ name: 'Category', type: 'Select Box', listId: 71 }] }, { wait: false });
 
     const postCall = (http.request as ReturnType<typeof vi.fn>).mock.calls.find(
       (c: unknown[]) => (c[0] as { method: string }).method === 'POST',
@@ -1536,7 +1536,7 @@ describe('ContentTypeResource', () => {
       throw new Error(`Unexpected: ${opts.method} ${opts.path}`);
     });
 
-    await resource.create({ name: 'Test', elements: [{ name: 'Body', type: 'HTML' }] });
+    await resource.create({ name: 'Test', elements: [{ name: 'Body', type: 'HTML' }] }, { wait: false });
 
     const postCall = (http.request as ReturnType<typeof vi.fn>).mock.calls.find(
       (c: unknown[]) => (c[0] as { method: string }).method === 'POST',
@@ -1558,7 +1558,7 @@ describe('ContentTypeResource', () => {
     await resource.create({
       name: 'Test',
       elements: [{ name: 'Slug', type: 'Plain Text', useAsFilename: true }],
-    });
+    }, { wait: false });
 
     const postCall = (http.request as ReturnType<typeof vi.fn>).mock.calls.find(
       (c: unknown[]) => (c[0] as { method: string }).method === 'POST',
@@ -1608,7 +1608,7 @@ describe('ContentTypeResource', () => {
 
     // Switch to Slug — no need to unset Name first
     ct.fields['Slug'].useAsFilename = true;
-    await ct.save();
+    await ct.save({ wait: false });
 
     expect(ct.fields['Name'].useAsFilename).toBe(false);
     expect(ct.fields['Slug'].useAsFilename).toBe(true);
@@ -1669,7 +1669,7 @@ describe('ContentTypeResource', () => {
       maxRepeats: 10,
     });
 
-    await ct.save();
+    await ct.save({ wait: false });
 
     const putCall = (http.request as ReturnType<typeof vi.fn>).mock.calls.find(
       (c: unknown[]) => (c[0] as { method: string }).method === 'PUT',
@@ -1759,7 +1759,7 @@ describe('ContentTypeResource', () => {
       elements: [
         { name: 'Items', type: 'Repeater', repeater: { contentTypeId: 77, layout: 'text/item', minRepeats: 2, maxRepeats: 20 } },
       ],
-    });
+    }, { wait: false });
 
     expect(ct.id).toBe(600);
 
@@ -1793,7 +1793,7 @@ describe('ContentTypeResource', () => {
       elements: [
         { name: 'Rows', type: 'Repeater', repeater: { contentTypeId: 44 } },
       ],
-    });
+    }, { wait: false });
 
     const postCall = (http.request as ReturnType<typeof vi.fn>).mock.calls.find(
       (c: unknown[]) => (c[0] as { method: string }).method === 'POST',
@@ -1894,7 +1894,7 @@ describe('ContentTypeResource', () => {
       });
 
       const before = getCacheEpoch();
-      await resource.create({ name: 'New CT', elements: [{ name: 'Title', type: 'Plain Text' }] });
+      await resource.create({ name: 'New CT', elements: [{ name: 'Title', type: 'Plain Text' }] }, { wait: false });
       expect(getCacheEpoch()).toBeGreaterThan(before);
     });
   });
@@ -1979,6 +1979,219 @@ describe('ContentTypeResource', () => {
 
       const putCall = calls.find((c) => c.method === 'PUT');
       expect(putCall).toBeUndefined();
+    });
+  });
+
+  // Read-after-write settle wait — issue #37. Content type writes propagate
+  // server-side with a short delay, so the SDK polls GET /contenttype/{id}
+  // after a write until the change is observable before resolving.
+  describe('read-after-write settle (issue #37)', () => {
+    // Deep-clone elements per read so save()'s in-place mutation of raw elements
+    // (e.g. rawEl.alias = newName) can't leak across mock reads.
+    const baseCt = (elements: Array<Record<string, unknown>>) => ({
+      id: 343, name: 'Article', alias: 'Article', description: 'desc', type: 10,
+      minAuthLevel: 2, workflow: 0, enableDirectEdit: true, sharedGroups: [],
+      contentTypeElements: elements.map((el) => ({ ...el })),
+    });
+
+    const nameEl = { id: 1, contentTypeID: 343, name: 'Name', description: '', type: 1, maxSize: 80, compulsory: true, listId: 0, sequence: 1, alias: 'Name', shown: true };
+    const exampleEl = { id: 2, contentTypeID: 343, name: 'Example', description: '', type: 1, maxSize: 80, compulsory: false, listId: 0, sequence: 2, alias: 'Example', shown: true };
+
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    it('addFields: polls GET until the new element is visible, then resolves', async () => {
+      // The post-write confirmation read returns stale data (no "Example") for
+      // the first two polls, then the element appears on the third.
+      let confirmReads = 0;
+      const getReads: number[] = [];
+      (http.request as ReturnType<typeof vi.fn>).mockImplementation(async (opts: { method: string; path: string }) => {
+        if (opts.path === '/type/') return ELEMENT_TYPES;
+        if (opts.path === '/htmlEditor') return HTML_EDITORS;
+        if (opts.method === 'PUT' && opts.path === '/contenttype/343') return undefined;
+        if (opts.method === 'GET' && opts.path === '/contenttype/343') {
+          getReads.push(Date.now());
+          // The very first GET is the update()'s internal fetch (pre-write state).
+          // Subsequent GETs are the settle poll.
+          if (getReads.length === 1) return baseCt([nameEl]);
+          confirmReads++;
+          return confirmReads >= 3 ? baseCt([nameEl, exampleEl]) : baseCt([nameEl]);
+        }
+        throw new Error(`Unexpected: ${opts.method} ${opts.path}`);
+      });
+
+      vi.useFakeTimers();
+      const promise = resource.update(343, { addFields: [{ name: 'Example', type: 'Plain Text', maxSize: 80 }] });
+
+      // Drive the poll to completion (flushes pending sleeps + microtasks).
+      await vi.runAllTimersAsync();
+
+      const ct = await promise;
+      expect(ct.fields['Example']).toBeDefined();
+      // Element visible on the 3rd confirmation poll.
+      expect(confirmReads).toBe(3);
+    });
+
+    it('wait:false skips the settle poll (single internal GET, no extra reads)', async () => {
+      const getPaths: string[] = [];
+      (http.request as ReturnType<typeof vi.fn>).mockImplementation(async (opts: { method: string; path: string }) => {
+        if (opts.path === '/type/') return ELEMENT_TYPES;
+        if (opts.path === '/htmlEditor') return HTML_EDITORS;
+        if (opts.method === 'PUT' && opts.path === '/contenttype/343') return undefined;
+        if (opts.method === 'GET' && opts.path === '/contenttype/343') {
+          getPaths.push(opts.path);
+          return baseCt([nameEl]);
+        }
+        throw new Error(`Unexpected: ${opts.method} ${opts.path}`);
+      });
+
+      await resource.update(343, { addFields: [{ name: 'Example', type: 'Plain Text', maxSize: 80 }] }, { wait: false });
+
+      // Only the internal fetch for the update — no confirmation poll.
+      expect(getPaths).toHaveLength(1);
+    });
+
+    it('resolves best-effort (no throw) if the change never becomes visible within waitTimeout', async () => {
+      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      const prevDebug = process.env.T4_DEBUG;
+      process.env.T4_DEBUG = '1';
+
+      (http.request as ReturnType<typeof vi.fn>).mockImplementation(async (opts: { method: string; path: string }) => {
+        if (opts.path === '/type/') return ELEMENT_TYPES;
+        if (opts.path === '/htmlEditor') return HTML_EDITORS;
+        if (opts.method === 'PUT' && opts.path === '/contenttype/343') return undefined;
+        // Always stale: the element never appears.
+        if (opts.method === 'GET' && opts.path === '/contenttype/343') return baseCt([nameEl]);
+        throw new Error(`Unexpected: ${opts.method} ${opts.path}`);
+      });
+
+      vi.useFakeTimers();
+      const promise = resource.update(
+        343,
+        { addFields: [{ name: 'Example', type: 'Plain Text', maxSize: 80 }] },
+        { waitTimeout: 300 },
+      );
+
+      // Advance past the 300ms ceiling, driving every poll + sleep.
+      await vi.runAllTimersAsync();
+
+      // Must resolve, not reject — the write itself succeeded.
+      const ct = await promise;
+      expect(ct).toBeDefined();
+      expect(warnSpy).toHaveBeenCalled();
+
+      warnSpy.mockRestore();
+      process.env.T4_DEBUG = prevDebug;
+    });
+
+    it('removeFields: polls until the removed element is gone', async () => {
+      let confirmReads = 0;
+      const getReads: number[] = [];
+      (http.request as ReturnType<typeof vi.fn>).mockImplementation(async (opts: { method: string; path: string }) => {
+        if (opts.path === '/type/') return ELEMENT_TYPES;
+        if (opts.path === '/htmlEditor') return HTML_EDITORS;
+        if (opts.method === 'PUT' && opts.path === '/contenttype/343') return undefined;
+        if (opts.method === 'GET' && opts.path === '/contenttype/343') {
+          getReads.push(Date.now());
+          if (getReads.length === 1) return baseCt([nameEl, exampleEl]); // internal fetch
+          confirmReads++;
+          // 'Example' still present on first poll, gone on the second.
+          return confirmReads >= 2 ? baseCt([nameEl]) : baseCt([nameEl, exampleEl]);
+        }
+        throw new Error(`Unexpected: ${opts.method} ${opts.path}`);
+      });
+
+      vi.useFakeTimers();
+      const promise = resource.update(343, { removeFields: ['Example'] });
+      await vi.runAllTimersAsync();
+      await promise;
+      expect(confirmReads).toBe(2);
+    });
+
+    it('updateFields rename: polls until the new name is visible', async () => {
+      let confirmReads = 0;
+      const getReads: number[] = [];
+      const renamedEl = { ...exampleEl, name: 'Headline', alias: 'Headline' };
+      (http.request as ReturnType<typeof vi.fn>).mockImplementation(async (opts: { method: string; path: string }) => {
+        if (opts.path === '/type/') return ELEMENT_TYPES;
+        if (opts.path === '/htmlEditor') return HTML_EDITORS;
+        if (opts.method === 'PUT' && opts.path === '/contenttype/343') return undefined;
+        if (opts.method === 'GET' && opts.path === '/contenttype/343') {
+          getReads.push(Date.now());
+          if (getReads.length === 1) return baseCt([nameEl, exampleEl]); // internal fetch
+          confirmReads++;
+          return confirmReads >= 2 ? baseCt([nameEl, renamedEl]) : baseCt([nameEl, exampleEl]);
+        }
+        throw new Error(`Unexpected: ${opts.method} ${opts.path}`);
+      });
+
+      vi.useFakeTimers();
+      const promise = resource.update(343, { updateFields: [{ name: 'Example', newName: 'Headline' }] });
+      await vi.runAllTimersAsync();
+      await promise;
+      expect(confirmReads).toBe(2);
+    });
+
+    it('create: polls GET /contenttype/{id} until the created type is readable', async () => {
+      let confirmReads = 0;
+      (http.request as ReturnType<typeof vi.fn>).mockImplementation(async (opts: { method: string; path: string }) => {
+        if (opts.path === '/type/') return ELEMENT_TYPES;
+        if (opts.path === '/htmlEditor') return HTML_EDITORS;
+        if (opts.method === 'POST' && opts.path === '/contenttype') {
+          return baseCt([nameEl, exampleEl]);
+        }
+        if (opts.method === 'GET' && opts.path === '/contenttype/343') {
+          confirmReads++;
+          // 404-style stale (empty elements) on first poll, then readable.
+          return confirmReads >= 2 ? baseCt([nameEl, exampleEl]) : { id: 343, contentTypeElements: [] };
+        }
+        throw new Error(`Unexpected: ${opts.method} ${opts.path}`);
+      });
+
+      vi.useFakeTimers();
+      const promise = resource.create({
+        name: 'Article',
+        elements: [{ name: 'Example', type: 'Plain Text', maxSize: 80 }],
+      });
+      await vi.runAllTimersAsync();
+      const ct = await promise;
+      expect(ct.id).toBe(343);
+      expect(confirmReads).toBe(2);
+    });
+
+    it('create with wait:false does not poll', async () => {
+      const getCalls: string[] = [];
+      (http.request as ReturnType<typeof vi.fn>).mockImplementation(async (opts: { method: string; path: string }) => {
+        if (opts.path === '/type/') return ELEMENT_TYPES;
+        if (opts.path === '/htmlEditor') return HTML_EDITORS;
+        if (opts.method === 'POST' && opts.path === '/contenttype') return baseCt([nameEl, exampleEl]);
+        if (opts.method === 'GET' && opts.path === '/contenttype/343') { getCalls.push(opts.path); return baseCt([nameEl, exampleEl]); }
+        throw new Error(`Unexpected: ${opts.method} ${opts.path}`);
+      });
+
+      await resource.create(
+        { name: 'Article', elements: [{ name: 'Example', type: 'Plain Text', maxSize: 80 }] },
+        { wait: false },
+      );
+      expect(getCalls).toHaveLength(0);
+    });
+
+    it('ContentType.save({ wait: false }) skips the poll', async () => {
+      const getPaths: string[] = [];
+      (http.request as ReturnType<typeof vi.fn>).mockImplementation(async (opts: { method: string; path: string }) => {
+        if (opts.path === '/type/') return ELEMENT_TYPES;
+        if (opts.path === '/htmlEditor') return HTML_EDITORS;
+        if (opts.method === 'PUT' && opts.path === '/contenttype/343') return undefined;
+        if (opts.method === 'GET' && opts.path === '/contenttype/343') { getPaths.push(opts.path); return baseCt([nameEl]); }
+        throw new Error(`Unexpected: ${opts.method} ${opts.path}`);
+      });
+
+      const ct = await resource.get(343); // 1 GET
+      ct.description = 'changed';
+      await ct.save({ wait: false });
+      // Only the get(343) read; save with wait:false adds no poll.
+      expect(getPaths).toHaveLength(1);
     });
   });
 });

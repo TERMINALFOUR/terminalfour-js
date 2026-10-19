@@ -400,6 +400,21 @@ export function normaliseBaseUrl(baseUrl: string): string {
 export const DEFAULT_CACHE_TTL = 5 * 60 * 1000;
 
 /**
+ * Default ceiling (ms) for a read-after-write settle wait. Content type writes
+ * propagate server-side with a short delay (measured ~0.5s, varies with load),
+ * so a write that resolves is not immediately readable. See issue #37.
+ */
+export const DEFAULT_WRITE_WAIT_TIMEOUT = 10_000;
+
+/** Interval (ms) between settle-wait polls. */
+export const WRITE_WAIT_POLL_INTERVAL = 50;
+
+/** Resolves after `ms` milliseconds. Honours fake timers in tests. */
+export function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/**
  * Global cache epoch. Incremented by `invalidateAllCaches()` to force
  * all TTL-based caches to treat their entries as expired. Every cache
  * records the epoch at write time; on read, if the current epoch is

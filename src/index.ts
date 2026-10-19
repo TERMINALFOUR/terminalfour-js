@@ -50,6 +50,7 @@ export type { MediaListItem } from './media-category-ref.js';
 export type {
   T4ClientConfig,
   LanguageOption,
+  WaitOption,
   ContentDTO,
   ContentTypeData,
   ContentTypeFieldDef,

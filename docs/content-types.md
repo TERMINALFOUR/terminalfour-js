@@ -7,6 +7,7 @@ Use `t4.contentTypes` to inspect and manage content type fields and layouts.
 - [List and read content types](#list-and-read-content-types)
 - [Create a content type](#create-a-content-type)
 - [Update a content type](#update-a-content-type)
+- [Waiting for writes to be readable](#waiting-for-writes-to-be-readable)
 - [Add or remove fields](#add-or-remove-fields)
 - [Manage content layouts](#manage-content-layouts)
 
@@ -211,6 +212,37 @@ await contentType.save();
 ```
 
 Set an HTML field's `editor` to `null` when you want to use the instance default.
+
+## Waiting for writes to be readable
+
+T4 applies a content type write a moment before the change becomes readable from the API (typically under a second, longer on busy instances). Without handling this, a read immediately after a write — including a chained SDK call that reads back, like adding a field and then renaming it — can see the old state and fail.
+
+By default, `create()`, `update()`, and `save()` wait until the change is readable before resolving, so chained operations are safe:
+
+```typescript
+const ct = await t4.contentTypes.create({
+  name: 'Propagation Demo',
+  elements: [{ name: 'Body', type: 'Plain Text', maxSize: 80 }],
+});
+
+// Add a field, then rename it — the rename sees the added field because
+// update() waited for the add to become readable.
+await t4.contentTypes.update(ct.id, { addFields: [{ name: 'Example', type: 'Plain Text', maxSize: 80 }] });
+await t4.contentTypes.update(ct.id, { updateFields: [{ name: 'Example', newName: 'Example Renamed' }] });
+```
+
+Each of the three methods accepts an options object:
+
+```typescript
+// Opt out of waiting — resolve as soon as the write returns (eventual consistency).
+await t4.contentTypes.update(ct.id, { description: 'x' }, { wait: false });
+
+// Raise the ceiling (default 10000ms) for a slow or busy instance.
+await t4.contentTypes.create(data, { waitTimeout: 30000 });
+await contentType.save({ waitTimeout: 30000 });
+```
+
+`wait` defaults to `true`. If the change does not become readable within `waitTimeout`, the call resolves anyway (the write itself succeeded) — it does not throw. Set the `T4_DEBUG=1` environment variable to see a warning when that happens.
 
 ## Add or remove fields
 
