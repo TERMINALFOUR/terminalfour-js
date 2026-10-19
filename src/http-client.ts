@@ -139,9 +139,18 @@ export class HttpClient {
     try {
       text = await response.text();
     } catch (error) {
+      // statusCode is 0, not response.status: the headers' status (often 200)
+      // is not a usable HTTP outcome once the body read fails, and a thrown
+      // error must never carry a 2xx status (callers branching on statusCode
+      // can't tell a "failed 200" from a real success). This matches the
+      // fetch-rejection (Network Error) path above. statusText stays
+      // 'Response Stream Error' and bodyReadFailed is set so callers can tell
+      // this apart from a never-connected network error — the operation may
+      // have completed server-side, so a blind retry could duplicate work.
       throw new T4ApiError({
-        statusCode: response.status,
+        statusCode: 0,
         statusText: 'Response Stream Error',
+        bodyReadFailed: true,
         responseBody:
           'The request succeeded but reading the response body failed ' +
           `(${error instanceof Error ? error.message : String(error)}). ` +
