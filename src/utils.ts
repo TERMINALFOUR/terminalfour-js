@@ -116,6 +116,44 @@ export function parseElementKey(key: string): { name: string; elementId: number;
 
 
 /**
+ * Sensible default element max sizes keyed by T4 element type id.
+ *
+ * T4's own UI defaults every new element to a max size of 80, which is too
+ * small for text-heavy element types and forces callers to set `maxSize`
+ * explicitly just to avoid truncation. The SDK instead picks a per-type default
+ * so a content type created without explicit sizes lands in a usable state:
+ *
+ * - Plain Text (1) → 240
+ * - Image (2)      → 10000
+ * - HTML (3)       → 5000
+ * - File (4)       → 10000
+ * - anything else  → 80 (the T4 default)
+ *
+ * The type ids are T4 system constants (stable across instances); the SDK
+ * resolves friendly type names to these ids via `GET /type/` before applying
+ * the default. Only a missing/`undefined` `maxSize` triggers a default — an
+ * explicit value, including `0`, is always honoured.
+ */
+export const DEFAULT_MAX_SIZE_BY_TYPE: Record<number, number> = {
+  1: 240,    // Plain Text
+  2: 10000,  // Image
+  3: 5000,   // HTML
+  4: 10000,  // File
+};
+
+/** Fallback max size for element types without a type-specific default. */
+export const DEFAULT_MAX_SIZE = 80;
+
+/**
+ * Returns the sensible default max size for a given element type id.
+ * Falls back to {@link DEFAULT_MAX_SIZE} (80) for any unlisted type.
+ */
+export function defaultMaxSizeForType(typeId: number): number {
+  return DEFAULT_MAX_SIZE_BY_TYPE[typeId] ?? DEFAULT_MAX_SIZE;
+}
+
+
+/**
  * Maps T4 status codes to friendly strings.
  * Sections use 0–2; content and media also use 3 (draft).
  */

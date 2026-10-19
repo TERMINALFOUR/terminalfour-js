@@ -79,6 +79,31 @@ const contentType = await t4.contentTypes.create({
 
 The SDK always inserts a `Name` element as the first element.
 
+### Default `maxSize`
+
+When you add an element without a `maxSize`, the SDK picks a sensible default based on the element type rather than forcing everything to Terminalfour's flat default of 80:
+
+| Element type | Default `maxSize` |
+|---|---|
+| Plain Text | 240 |
+| HTML | 5000 |
+| Image | 10000 |
+| File | 10000 |
+| Everything else | 80 |
+
+```typescript
+await t4.contentTypes.create({
+  name: 'Blog Post',
+  elements: [
+    { name: 'Title', type: 'Plain Text', required: true }, // maxSize defaults to 240
+    { name: 'Body', type: 'HTML' },                         // maxSize defaults to 5000
+    { name: 'Summary', type: 'Plain Text', maxSize: 500 },  // explicit 500 is kept
+  ],
+});
+```
+
+Set `maxSize` yourself to override the default — your value is always used, including `0`. The same defaults apply to `addField()` and `update({ addFields })`. Changing an existing element's size through `updateFields` never applies a default; it only changes what you pass.
+
 ### List-based fields
 
 `Select Box`, `Radio Button`, `Check Box`, `Multiple Select`, `Multi-select List`, `Cascading List`, and `Keyword Selector` fields require `listId`:

@@ -1,6 +1,6 @@
 import { HttpClient } from '../http-client.js';
 import { ContentTypeData, ContentTypeFieldDef, WaitOption } from '../types.js';
-import { decodeHtmlEntities, AUTH_LEVEL_MAP, AUTH_LEVEL_REVERSE, debugWarn, DEFAULT_CACHE_TTL, DEFAULT_WRITE_WAIT_TIMEOUT, WRITE_WAIT_POLL_INTERVAL, sleep, getCacheEpoch, invalidateAllCaches, readPrimaryGroup, readSharedGroups, writePrimaryGroup, writeSharedGroups, assertGroupsValid, assertRequired, assertNotEmptyIfPresent, RawPrimaryGroup } from '../utils.js';
+import { decodeHtmlEntities, AUTH_LEVEL_MAP, AUTH_LEVEL_REVERSE, debugWarn, DEFAULT_CACHE_TTL, DEFAULT_WRITE_WAIT_TIMEOUT, WRITE_WAIT_POLL_INTERVAL, sleep, getCacheEpoch, invalidateAllCaches, readPrimaryGroup, readSharedGroups, writePrimaryGroup, writeSharedGroups, assertGroupsValid, assertRequired, assertNotEmptyIfPresent, defaultMaxSizeForType, RawPrimaryGroup } from '../utils.js';
 
 /** Raw content type element from the API response */
 interface ApiContentTypeElement {
@@ -677,7 +677,7 @@ export class ContentType implements ContentTypeData {
       name: data.name,
       description: data.description ?? '',
       type: String(typeMatch.id),
-      maxSize: data.maxSize ?? 80,
+      maxSize: data.maxSize ?? defaultMaxSizeForType(typeMatch.id),
       compulsory: data.required ?? false,
       shown: data.shown ?? true,
       contentTypeID: this.id,
@@ -711,7 +711,7 @@ export class ContentType implements ContentTypeData {
       description: data.description ?? '',
       type: typeMatch.name,
       required: data.required ?? false,
-      maxSize: data.maxSize ?? 80,
+      maxSize: data.maxSize ?? defaultMaxSizeForType(typeMatch.id),
       listId: data.listId ?? 0,
       listName: '',
       shown: data.shown ?? true,
@@ -1396,7 +1396,7 @@ export class ContentTypeResource {
         id: elId,
         name: el.name,
         description: el.description ?? '',
-        maxSize: String(el.maxSize ?? 80),
+        maxSize: String(el.maxSize ?? defaultMaxSizeForType(typeId)),
         compulsory: el.required ?? false,
         type: String(typeId),
         listId: el.listId ? String(el.listId) : '',

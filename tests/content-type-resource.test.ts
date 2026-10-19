@@ -2194,4 +2194,162 @@ describe('ContentTypeResource', () => {
       expect(getPaths).toHaveLength(1);
     });
   });
+
+  describe('type-based default maxSize (issue #34)', () => {
+    /** Builds a POST /contenttype mock whose response echoes the request elements. */
+    function mockCreate() {
+      (http.request as ReturnType<typeof vi.fn>).mockImplementation(async (opts: { method: string; path: string; body?: unknown }) => {
+        if (opts.path === '/type/') return ELEMENT_TYPES;
+        if (opts.path === '/htmlEditor') return HTML_EDITORS;
+        if (opts.method === 'POST' && opts.path === '/contenttype') {
+          const reqElements = (opts.body as { contentTypeElements?: Array<Record<string, unknown>> }).contentTypeElements ?? [];
+          return {
+            id: 500, name: 'New CT', alias: 'New CT', description: '',
+            contentTypeElements: reqElements.map((el, i) => ({
+              id: i + 1, name: el.name, type: Number(el.type), alias: el.name, sequence: i + 1,
+            })),
+          };
+        }
+        throw new Error(`Unexpected: ${opts.method} ${opts.path}`);
+      });
+    }
+
+    function createdElements() {
+      const postCall = (http.request as ReturnType<typeof vi.fn>).mock.calls.find(
+        (c: unknown[]) => (c[0] as { method: string }).method === 'POST',
+      );
+      const body = postCall![0] as { body: { contentTypeElements: Array<Record<string, unknown>> } };
+      return body.body.contentTypeElements;
+    }
+
+    it('create() defaults Plain Text to 240, HTML to 5000, Image/File to 10000, other to 80', async () => {
+      mockCreate();
+      await resource.create({
+        name: 'New CT',
+        elements: [
+          { name: 'Title', type: 'Plain Text' },
+          { name: 'Body', type: 'HTML' },
+          { name: 'Picture', type: 'Image' },
+          { name: 'Attachment', type: 'File' },
+          { name: 'Published', type: 'Date' },
+        ],
+      }, { wait: false });
+
+      const els = createdElements();
+      const byName = (n: string) => els.find((e) => e.name === n)!;
+      expect(byName('Title').maxSize).toBe('240');
+      expect(byName('Body').maxSize).toBe('5000');
+      expect(byName('Picture').maxSize).toBe('10000');
+      expect(byName('Attachment').maxSize).toBe('10000');
+      expect(byName('Published').maxSize).toBe('80');
+    });
+
+    it('create() honours an explicit maxSize over the type default', async () => {
+      mockCreate();
+      await resource.create({
+        name: 'New CT',
+        elements: [{ name: 'Summary', type: 'Plain Text', maxSize: 500 }],
+      }, { wait: false });
+      expect(createdElements().find((e) => e.name === 'Summary')!.maxSize).toBe('500');
+    });
+
+    it('create() preserves an explicit maxSize of 0 (does not apply the default)', async () => {
+      mockCreate();
+      await resource.create({
+        name: 'New CT',
+        elements: [{ name: 'Zero', type: 'Plain Text', maxSize: 0 }],
+      }, { wait: false });
+      expect(createdElements().find((e) => e.name === 'Zero')!.maxSize).toBe('0');
+    });
+
+    it('create() keeps the injected system Name element at 80', async () => {
+      mockCreate();
+      await resource.create({
+        name: 'New CT',
+        elements: [{ name: 'Body', type: 'HTML' }],
+      }, { wait: false });
+      expect(createdElements().find((e) => e.name === 'Name')!.maxSize).toBe(80);
+    });
+
+    it('addField() defaults by type when maxSize is omitted', async () => {
+      (http.request as ReturnType<typeof vi.fn>).mockImplementation(async (opts: { method: string; path: string }) => {
+        if (opts.path === '/type/') return ELEMENT_TYPES;
+        if (opts.path === '/htmlEditor') return HTML_EDITORS;
+        if (opts.method === 'GET' && opts.path === '/contenttype/343') return ctWithElements();
+        if (opts.method === 'PUT' && opts.path === '/contenttype/343') return undefined;
+        throw new Error(`Unexpected: ${opts.method} ${opts.path}`);
+      });
+
+      const ct = await resource.get(343);
+      await ct.addField({ name: 'Body', type: 'HTML' });
+      expect(ct.fields['Body'].maxSize).toBe(5000);
+
+      await ct.addField({ name: 'Headline', type: 'Plain Text' });
+      expect(ct.fields['Headline'].maxSize).toBe(240);
+
+      await ct.addField({ name: 'Priority', type: 'Whole Number' });
+      expect(ct.fields['Priority'].maxSize).toBe(80);
+    });
+
+    it('addField() honours an explicit maxSize (including 0)', async () => {
+      (http.request as ReturnType<typeof vi.fn>).mockImplementation(async (opts: { method: string; path: string }) => {
+        if (opts.path === '/type/') return ELEMENT_TYPES;
+        if (opts.path === '/htmlEditor') return HTML_EDITORS;
+        if (opts.method === 'GET' && opts.path === '/contenttype/343') return ctWithElements();
+        if (opts.method === 'PUT' && opts.path === '/contenttype/343') return undefined;
+        throw new Error(`Unexpected: ${opts.method} ${opts.path}`);
+      });
+
+      const ct = await resource.get(343);
+      await ct.addField({ name: 'Body', type: 'HTML', maxSize: 120 });
+      expect(ct.fields['Body'].maxSize).toBe(120);
+
+      await ct.addField({ name: 'Zero', type: 'Plain Text', maxSize: 0 });
+      expect(ct.fields['Zero'].maxSize).toBe(0);
+    });
+
+    it('update({ addFields }) applies the type default when maxSize is omitted', async () => {
+      (http.request as ReturnType<typeof vi.fn>).mockImplementation(async (opts: { method: string; path: string }) => {
+        if (opts.path === '/type/') return ELEMENT_TYPES;
+        if (opts.path === '/htmlEditor') return HTML_EDITORS;
+        if (opts.method === 'GET' && opts.path === '/contenttype/343') return fullContentType;
+        if (opts.method === 'PUT' && opts.path === '/contenttype/343') return undefined;
+        throw new Error(`Unexpected: ${opts.method} ${opts.path}`);
+      });
+
+      const ct = await resource.update(343, {
+        addFields: [{ name: 'Body', type: 'HTML' }],
+      });
+      expect(ct.fields['Body'].maxSize).toBe(5000);
+    });
+
+    it('update({ updateFields }) does NOT apply a type default to an existing element', async () => {
+      const ctForUpdate = () => ({
+        ...fullContentType,
+        contentTypeElements: [
+          { id: 1, contentTypeID: 343, name: 'Name', description: '', type: 1, maxSize: 80, compulsory: true, listId: 0, sequence: 1, alias: 'Name', shown: true },
+          { id: 2, contentTypeID: 343, name: 'Body', description: '', type: 3, maxSize: 123, compulsory: false, listId: 0, sequence: 2, alias: 'Body', shown: true },
+        ],
+      });
+      (http.request as ReturnType<typeof vi.fn>).mockImplementation(async (opts: { method: string; path: string }) => {
+        if (opts.path === '/type/') return ELEMENT_TYPES;
+        if (opts.path === '/htmlEditor') return HTML_EDITORS;
+        if (opts.method === 'GET' && opts.path === '/contenttype/343') return ctForUpdate();
+        if (opts.method === 'PUT' && opts.path === '/contenttype/343') return undefined;
+        throw new Error(`Unexpected: ${opts.method} ${opts.path}`);
+      });
+
+      const ct = await resource.update(343, {
+        updateFields: [{ name: 'Body', required: true }],
+      });
+
+      const putCall = (http.request as ReturnType<typeof vi.fn>).mock.calls.find(
+        (c: unknown[]) => (c[0] as { method: string }).method === 'PUT',
+      );
+      const body = putCall![0] as { body: { contentTypeElements: Array<Record<string, unknown>> } };
+      const bodyEl = body.body.contentTypeElements.find((el) => el.name === 'Body');
+      expect(bodyEl!.maxSize).toBe(123);
+      expect(ct.fields['Body'].maxSize).toBe(123);
+    });
+  });
 });

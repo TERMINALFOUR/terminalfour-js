@@ -151,6 +151,20 @@ const env = await t4.environment();
 const lic = await t4.licence();
 ```
 
+## Content approval and default status
+
+Terminalfour has an approval workflow, and the SDK follows the UI's default: content you create or save **without** an explicit `status` is set to `'pending'`, not approved. Pending content is held for review and is **not published** until it is approved.
+
+```typescript
+// Defaults to 'pending' — held for review, not published
+await t4.section(482).content.create({ type: 44, name: 'Draft Post', fields: { Title: 'Hi' } });
+
+// Explicitly approved — ready to publish
+await t4.section(482).content.create({ type: 44, name: 'Live Post', status: 'approved', fields: { Title: 'Hi' } });
+```
+
+This applies to `content.create()`, `content.update()`, and a content item's `save()`. Pass `status: 'approved'` (or call `item.approve()`) when you want content to be approved. See [Content](./content.md) for the full status model.
+
 ## Debug requests
 
 Set `T4_DEBUG=1` to log HTTP requests and internal warnings:
