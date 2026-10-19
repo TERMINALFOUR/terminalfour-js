@@ -8,6 +8,15 @@ export class T4ApiError extends Error {
   readonly responseBody: unknown;
   readonly requestUrl: string;
   readonly requestMethod: string;
+  /**
+   * True when `fetch` returned response headers but reading the response body
+   * then failed (e.g. the stream dropped or timed out mid-body). In this case
+   * `statusCode` is 0 — the server's header status is deliberately discarded
+   * because it is not a usable HTTP outcome — and the server-side operation
+   * may still have completed. Callers should check this flag (rather than
+   * string-matching `statusText`) before blindly retrying a write.
+   */
+  readonly bodyReadFailed: boolean;
 
   constructor(params: {
     statusCode: number;
@@ -17,6 +26,8 @@ export class T4ApiError extends Error {
     requestMethod: string;
     /** The original error that caused this API error (e.g. network failure). */
     cause?: Error;
+    /** Set when response headers arrived but the body read failed. */
+    bodyReadFailed?: boolean;
   }) {
     const message = `T4 API error: ${params.requestMethod} ${params.requestUrl} responded with ${params.statusCode} ${params.statusText}`;
     super(message, params.cause ? { cause: params.cause } : undefined);
@@ -26,5 +37,6 @@ export class T4ApiError extends Error {
     this.responseBody = params.responseBody;
     this.requestUrl = params.requestUrl;
     this.requestMethod = params.requestMethod;
+    this.bodyReadFailed = params.bodyReadFailed ?? false;
   }
 }

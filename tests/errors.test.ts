@@ -47,4 +47,14 @@ describe('T4ApiError', () => {
     const err = new T4ApiError(params);
     expect(err.cause).toBeUndefined();
   });
+
+  it('defaults bodyReadFailed to false when not provided', () => {
+    const err = new T4ApiError(params);
+    expect(err.bodyReadFailed).toBe(false);
+  });
+
+  it('sets bodyReadFailed to true when provided', () => {
+    const err = new T4ApiError({ ...params, bodyReadFailed: true });
+    expect(err.bodyReadFailed).toBe(true);
+  });
 });
