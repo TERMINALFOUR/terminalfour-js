@@ -1,6 +1,6 @@
 import { HttpClient } from '../http-client.js';
-import { ContentTypeData, ContentTypeFieldDef } from '../types.js';
-import { decodeHtmlEntities, AUTH_LEVEL_MAP, AUTH_LEVEL_REVERSE, debugWarn, DEFAULT_CACHE_TTL, getCacheEpoch, invalidateAllCaches, readPrimaryGroup, readSharedGroups, writePrimaryGroup, writeSharedGroups, assertGroupsValid, assertRequired, assertNotEmptyIfPresent, defaultMaxSizeForType, RawPrimaryGroup } from '../utils.js';
+import { ContentTypeData, ContentTypeFieldDef, WaitOption } from '../types.js';
+import { decodeHtmlEntities, AUTH_LEVEL_MAP, AUTH_LEVEL_REVERSE, debugWarn, DEFAULT_CACHE_TTL, DEFAULT_WRITE_WAIT_TIMEOUT, WRITE_WAIT_POLL_INTERVAL, sleep, getCacheEpoch, invalidateAllCaches, readPrimaryGroup, readSharedGroups, writePrimaryGroup, writeSharedGroups, assertGroupsValid, assertRequired, assertNotEmptyIfPresent, defaultMaxSizeForType, RawPrimaryGroup } from '../utils.js';
 
 /** Raw content type element from the API response */
 interface ApiContentTypeElement {
@@ -46,6 +46,73 @@ interface ApiContentType {
 
 /** The content type category ID that marks a system content type. */
 const SYSTEM_CONTENT_TYPE = 30;
+
+/**
+ * Waits until a content type write is readable from the server (issue #37).
+ *
+ * Content type writes propagate server-side with a short delay, so a write that
+ * resolves is not immediately readable — a read, or a chained SDK call that reads
+ * back (like add-then-rename), can see stale state. This polls the authoritative
+ * raw `GET /contenttype/{id}` until `predicate` confirms the written change is
+ * observable.
+ *
+ * The read is the settle signal (not the `/lock` or `/notifications` endpoints):
+ * both of those have a startup window where the task is not yet registered after
+ * the write returns, so "poll until unlocked" can return instantly and miss the
+ * propagation entirely. The content read is self-verifying — the change is either
+ * present or it is not — and has no such window.
+ *
+ * Best-effort: on timeout it resolves anyway (the write itself succeeded; waiting
+ * is only about read-after-write visibility) and emits a debug warning.
+ *
+ * `invalidateAllCaches()` must have been called by the caller before this runs so
+ * the poll reads fresh data rather than a cached definition.
+ */
+async function waitForContentTypeReadable(
+  httpClient: HttpClient,
+  id: number,
+  predicate: (raw: ApiContentType) => boolean,
+  options?: WaitOption,
+): Promise<void> {
+  if (options?.wait === false) return;
+
+  const timeout = options?.waitTimeout ?? DEFAULT_WRITE_WAIT_TIMEOUT;
+  const deadline = Date.now() + timeout;
+
+  for (;;) {
+    let raw: ApiContentType | undefined;
+    try {
+      raw = await httpClient.request<ApiContentType>({ method: 'GET', path: `/contenttype/${id}` });
+    } catch (error) {
+      // A transient read failure mid-poll shouldn't abort the wait — keep trying
+      // until the deadline. (Issue #40 may later add HTTP-layer retry here too.)
+      debugWarn(`Settle poll read failed for content type ${id}; will retry`, error);
+    }
+
+    if (raw && predicate(raw)) return;
+
+    if (Date.now() >= deadline) {
+      debugWarn(
+        `Content type ${id} write did not become readable within ${timeout}ms ` +
+        '(issue #37 propagation). Resolving anyway — the write succeeded; a read ' +
+        'immediately after may still be stale. Pass a larger waitTimeout if this persists.',
+      );
+      return;
+    }
+
+    await sleep(WRITE_WAIT_POLL_INTERVAL);
+  }
+}
+
+/** Returns the friendly name of a raw element (alias wins, decoded). */
+function rawElementName(el: ApiContentTypeElement): string {
+  return decodeHtmlEntities(el.alias || el.name);
+}
+
+/** True if the raw content type has an element matching `name` (alias or name). */
+function rawHasElement(raw: ApiContentType, name: string): boolean {
+  return (raw.contentTypeElements ?? []).some((el) => rawElementName(el) === name);
+}
 
 function resolveTypeName(type: unknown, typeMap: Map<number, string>): string {
   if (type == null) return '';
@@ -792,10 +859,21 @@ export class ContentType implements ContentTypeData {
     return renames;
   }
 
-  /** Persists current property values to the server via PUT. */
-  async save(): Promise<void> {
+  /**
+   * Persists current property values to the server via PUT.
+   *
+   * By default waits until the change is readable from the server before
+   * resolving (issue #37 — content type writes propagate with a short delay).
+   * Pass `{ wait: false }` to resolve as soon as the PUT returns, or
+   * `{ waitTimeout }` to adjust the ceiling (default 10s).
+   */
+  async save(options?: WaitOption): Promise<void> {
     assertRequired(this.name, 'Content type name');
     assertGroupsValid(this.primaryGroup, this.sharedGroups);
+
+    // Capture what's changing BEFORE _rawData is overwritten, so the post-write
+    // settle poll knows what to confirm is readable.
+    const settlePredicate = this._buildSettlePredicate();
 
     const authLevel = String(AUTH_LEVEL_REVERSE[this.minUserLevel] ?? this._rawData.minAuthLevel ?? 2);
 
@@ -909,6 +987,61 @@ export class ContentType implements ContentTypeData {
     // Update raw data for next save
     this._rawData = updated as unknown as ApiContentType;
     this._removedElementIds.clear();
+
+    // Wait until the write is readable from the server (issue #37). Runs after
+    // the cache invalidation so the poll reads fresh data.
+    await waitForContentTypeReadable(this._httpClient, this.id, settlePredicate, options);
+  }
+
+  /**
+   * Builds a predicate that confirms this save's changes are readable from the
+   * server. Captures added element names, renamed-to names, and removed element
+   * names from the current pending state (must be called before `_rawData` is
+   * overwritten). The returned predicate passes when every added/renamed element
+   * is present and every removed element is absent in a fresh read.
+   */
+  private _buildSettlePredicate(): (raw: ApiContentType) => boolean {
+    const originalElements = (this._rawData.contentTypeElements ?? []) as ApiContentTypeElement[];
+    const originalById = new Map<number, ApiContentTypeElement>();
+    for (const el of originalElements) {
+      if (el.id !== undefined) originalById.set(el.id, el);
+    }
+
+    const expectedPresent = new Set<string>();
+    const expectedAbsent = new Set<string>();
+
+    for (const field of Object.values(this.fields)) {
+      const elementId = (field as unknown as { _elementId?: number })._elementId;
+      // New field (negative/unknown id) → must become present.
+      if (elementId === undefined || elementId < 0 || !originalById.has(elementId)) {
+        expectedPresent.add(field.name);
+        continue;
+      }
+      // Existing field: detect a rename against its original name.
+      const originalName = rawElementName(originalById.get(elementId)!);
+      if (originalName !== field.name) {
+        expectedPresent.add(field.name);
+        expectedAbsent.add(originalName);
+      }
+    }
+
+    // Removed elements → must become absent.
+    for (const id of this._removedElementIds) {
+      const el = originalById.get(id);
+      if (el) expectedAbsent.add(rawElementName(el));
+    }
+
+    // Property-only changes (description, maxSize, etc.) have no element-presence
+    // signal; a single successful read is enough to confirm the write landed.
+    return (raw: ApiContentType): boolean => {
+      for (const name of expectedPresent) {
+        if (!rawHasElement(raw, name)) return false;
+      }
+      for (const name of expectedAbsent) {
+        if (rawHasElement(raw, name)) return false;
+      }
+      return true;
+    };
   }
 }
 
@@ -1072,7 +1205,7 @@ export class ContentTypeResource {
     }>;
     /** Field names to remove from the content type */
     removeFields?: string[];
-  }): Promise<ContentType> {
+  }, options?: WaitOption): Promise<ContentType> {
     const ct = await this.get(id);
     if (data.name !== undefined) ct.name = data.name;
     if (data.description !== undefined) ct.description = data.description;
@@ -1111,7 +1244,7 @@ export class ContentTypeResource {
         await ct.addField(field);
       }
     }
-    await ct.save();
+    await ct.save(options);
     return ct;
   }
 
@@ -1179,7 +1312,7 @@ export class ContentTypeResource {
     directEdit?: boolean;
     sharedGroups?: number[];
     primaryGroup?: number;
-  }): Promise<ContentType> {
+  }, options?: WaitOption): Promise<ContentType> {
     if (!data.name?.trim()) {
       throw new Error('Content type name is required');
     }
@@ -1330,6 +1463,17 @@ export class ContentTypeResource {
 
     // New content type may affect cached lookups; invalidate for consistency.
     invalidateAllCaches();
+
+    // Wait until the new content type (with its elements) is readable from the
+    // server before resolving (issue #37). Confirm the user-supplied element
+    // names are present in a fresh read.
+    const expectedNames = data.elements.map((el) => el.name);
+    await waitForContentTypeReadable(
+      this.httpClient,
+      raw.id,
+      (fresh) => expectedNames.every((name) => rawHasElement(fresh, name)),
+      options,
+    );
 
     const editorMap = await this.getEditorMap();
     const result = mapContentType(raw, typeMap, editorMap);

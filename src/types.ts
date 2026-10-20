@@ -22,6 +22,34 @@ export interface T4ClientConfig {
   userAgent?: string;
 }
 
+/**
+ * Read-after-write settle options for content type writes.
+ *
+ * Content type writes (`create`, `update`, `save`) propagate server-side with a
+ * short delay, so a write that resolves is not immediately readable — a read (or
+ * a chained SDK call that reads back, like add-then-rename) can see stale state.
+ * By default the SDK waits until the change is observable before resolving. See
+ * issue #37.
+ *
+ * Deliberately named `wait`/`waitTimeout` (not "retry") to stay distinct from the
+ * HTTP-layer transient-failure retry proposed in issue #40: this waits for a
+ * *successful* write to become readable, it does not retry failed requests.
+ */
+export interface WaitOption {
+  /**
+   * Wait until the write is readable before resolving. Defaults to `true`.
+   * Pass `false` to resolve as soon as the write request returns, accepting
+   * eventual consistency (the pre-#37 behaviour).
+   */
+  wait?: boolean;
+  /**
+   * Maximum time (ms) to wait for the write to become readable before giving up
+   * and resolving anyway (best-effort — the write itself succeeded). Defaults to
+   * 10000. Ignored when `wait` is `false`.
+   */
+  waitTimeout?: number;
+}
+
 /** Optional language override for per-call language selection */
 export interface LanguageOption {
   language?: string;
