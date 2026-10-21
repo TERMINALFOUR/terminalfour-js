@@ -31,6 +31,35 @@ try {
 | `requestUrl` | Full request URL |
 | `responseBody` | Parsed response body |
 | `cause` | Original error for network failures |
+| `bodyReadFailed` | `true` when response headers arrived but reading the body failed |
+
+### Transport-level failures
+
+Two failures have no usable HTTP result, so the SDK reports both with `statusCode: 0` rather than a misleading HTTP status:
+
+| Situation | `statusCode` | `statusText` | `bodyReadFailed` |
+|---|---|---|---|
+| `fetch` never connects (DNS failure, connection refused, timeout before response) | `0` | `'Network Error'` | `false` |
+| Headers arrived, then the body read failed (stream dropped or timed out mid-body) | `0` | `'Response Stream Error'` | `true` |
+
+A thrown `T4ApiError` therefore **never** carries a 2xx `statusCode`, so retry logic that branches on `statusCode` (for example "retry on network or 5xx") behaves predictably.
+
+The second case needs extra care: because the server already sent `200` headers, the server-side operation may have **completed** even though the SDK could not read the body — common for long operations such as section duplication. Check `bodyReadFailed` before retrying a write, so you don't duplicate work:
+
+```typescript
+try {
+  await t4.section(482).duplicate(500);
+} catch (error) {
+  if (error instanceof T4ApiError && error.bodyReadFailed) {
+    // Headers came back but the body read failed. The duplicate may already
+    // exist server-side — verify before retrying rather than blindly retrying.
+  } else if (error instanceof T4ApiError && error.statusCode === 0) {
+    // Never connected — safe to retry.
+  }
+}
+```
+
+Prefer the `bodyReadFailed` flag over inspecting `statusText`: the flag is the stable, machine-checkable signal.
 
 ## Handle validation errors
 

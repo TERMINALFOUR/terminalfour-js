@@ -142,9 +142,16 @@ describe('HttpClient', () => {
     } catch (e) {
       const err = e as T4ApiError;
       expect(err).toBeInstanceOf(T4ApiError);
-      expect(err.statusCode).toBe(200);
+      // A body-read failure is a transport-level failure with no usable HTTP
+      // result, so it must NOT carry the server's 2xx status. statusCode is 0,
+      // matching the fetch-rejection (network error) path (issue #39).
+      expect(err.statusCode).toBe(0);
       expect(err.statusText).toBe('Response Stream Error');
+      expect(err.bodyReadFailed).toBe(true);
       expect(String(err.responseBody)).toMatch(/may have\s+completed the work/);
+      // The observed header status (200 here) is recorded in the message for
+      // diagnostics, even though statusCode is deliberately 0 (issue #39 review).
+      expect(String(err.responseBody)).toMatch(/status 200/);
       expect((err.cause as Error).message).toBe('terminated: body timeout');
     }
   });
@@ -180,6 +187,9 @@ describe('HttpClient', () => {
       expect(err).toBeInstanceOf(T4ApiError);
       expect(err.statusCode).toBe(0);
       expect(err.statusText).toBe('Network Error');
+      // A never-connected network error is distinguishable from a body-read
+      // failure: both are statusCode 0, but only the latter sets bodyReadFailed.
+      expect(err.bodyReadFailed).toBe(false);
       expect(err.cause).toBeInstanceOf(Error);
       expect((err.cause as Error).message).toBe('Network failure');
     }
