@@ -116,7 +116,7 @@ Every request the SDK makes carries a `User-Agent` header identifying the SDK an
 User-Agent: Terminalfour-JS-SDK/1.2.0
 ```
 
-The version is read from the SDK's `package.json` at runtime, so it always matches the installed release — nothing to update by hand.
+The version is baked in from the SDK's `package.json` when the package is built, so it always matches the installed release — nothing to update by hand, and it stays correct even when the SDK is bundled into your application.
 
 To attribute traffic to a particular downstream application, pass a `userAgent`. It is **prepended** before the SDK default (separated by a single space), never a replacement. Your application leads, so logs identify the application first and the SDK second, while the SDK identity and version always stay present for diagnostics:
 
