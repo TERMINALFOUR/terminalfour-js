@@ -30,6 +30,7 @@ const t4 = new T4Client({
 | `language` | `string` | `'en'` | Default language for supported operations |
 | `concurrency` | `number` | `10` | Maximum parallel HTTP requests |
 | `userAgent` | `string` | — | Identifier prepended to the SDK's `User-Agent` header |
+| `retry` | `RetryConfig \| false` | on (conservative) | Automatic retry with backoff for transient GET failures. See [Automatic retry](#automatic-retry-for-transient-failures) |
 
 ### `baseUrl` requirements
 
@@ -132,6 +133,48 @@ const t4 = new T4Client({
 ```
 
 Follow the usual `User-Agent` convention of whitespace-separated `product/version` tokens. Blank or whitespace-only values are ignored, leaving just the SDK default. The header applies to every request, including multipart media uploads, and cannot be overridden per request.
+
+## Automatic retry for transient failures
+
+Transient failures — rate limiting (`429`), momentary unavailability (`502`/`503`/`504`), and network blips (dropped connections, DNS hiccups) — happen on real instances and networks. The SDK retries these automatically with exponential backoff, so a brief blip doesn't abort a whole operation. Retry is **on by default** with a conservative budget.
+
+Only **GET** requests are retried. GETs are safe to repeat; other methods (`POST`, `PUT`, `DELETE`) are never auto-retried, so a write that may have taken effect server-side is never duplicated by a retry.
+
+```typescript
+const t4 = new T4Client({
+  baseUrl: 'https://mysite.edu/terminalfour/rs',
+  apiToken: 'your-api-token',
+  retry: {
+    maxRetries: 2,                  // retries after the first attempt (0 disables)
+    retryOn: [429, 502, 503, 504],  // status codes treated as transient
+    baseDelayMs: 500,               // exponential backoff base
+    maxDelayMs: 10_000,             // cap on any single backoff
+    respectRetryAfter: true,        // honour a Retry-After header, overriding backoff
+  },
+});
+```
+
+| Option | Type | Default | Description |
+|---|---|---|---|
+| `maxRetries` | `number` | `2` | Retries after the initial attempt. `0` disables retry |
+| `retryOn` | `number[]` | `[429, 502, 503, 504]` | Status codes retried (GET only) |
+| `baseDelayMs` | `number` | `500` | Exponential backoff base |
+| `maxDelayMs` | `number` | `10000` | Maximum delay any single backoff can reach |
+| `respectRetryAfter` | `boolean` | `true` | Honour a `Retry-After` header (seconds or HTTP-date), overriding the computed delay |
+
+Behaviour notes:
+
+- **Network errors** (a `T4ApiError` with `statusCode: 0`) are always retried for GET, regardless of `retryOn` — except a body-read failure after the server already responded (`bodyReadFailed`), which is never retried because the operation may have completed.
+- **Backoff uses full jitter** — a random delay in `[0, min(maxDelayMs, baseDelayMs × 2^attempt)]` — to avoid retry storms when many requests fail at once.
+- **`Retry-After`** (on a `429`/`503`) overrides the computed backoff when `respectRetryAfter` is on, clamped to `maxDelayMs`.
+- **Timeouts stay per-attempt:** `timeoutMs` applies to each attempt, so total time is bounded by the attempts plus their backoff.
+- Retries cooperate with the concurrency limiter — a request waiting out its backoff releases its slot so other requests keep flowing.
+
+Disable retry entirely with `retry: false` (or `maxRetries: 0`):
+
+```typescript
+const t4 = new T4Client({ baseUrl, apiToken, retry: false });
+```
 
 ## Inspect the T4 instance
 

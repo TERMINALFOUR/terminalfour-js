@@ -1,36 +1,89 @@
-import { HttpRequestOptions } from './types.js';
+import { HttpRequestOptions, RetryConfig, ResolvedRetryConfig } from './types.js';
 import { T4ApiError } from './errors.js';
-import { debugWarn } from './utils.js';
+import { debugWarn, sleep } from './utils.js';
+import { resolveRetryConfig, computeBackoff, isRetryableError, retryAfterDelay } from './retry.js';
 
 /** Default maximum concurrent requests */
 const DEFAULT_CONCURRENCY = 10;
 
+/** Injectable collaborators for deterministic testing of backoff timing. */
+export interface HttpClientHooks {
+  /** Sleep function (defaults to the shared `sleep`, which honours fake timers). */
+  sleep?: (ms: number) => Promise<void>;
+  /** Random source in `[0, 1)` for jitter (defaults to `Math.random`). */
+  random?: () => number;
+}
+
 /**
  * Internal HTTP client that handles authentication, URL construction,
  * content-type headers, JSON/multipart encoding, error wrapping,
- * and concurrency limiting.
+ * concurrency limiting, and transient-failure retry with backoff.
  */
 export class HttpClient {
   private readonly baseUrl: string;
   private readonly apiToken: string;
   private readonly maxConcurrency: number;
   private readonly userAgent?: string;
+  private readonly retryConfig: ResolvedRetryConfig;
+  private readonly sleep: (ms: number) => Promise<void>;
+  private readonly random: () => number;
   private inFlight = 0;
   private waitQueue: Array<() => void> = [];
 
-  constructor(baseUrl: string, apiToken: string, concurrency?: number, userAgent?: string) {
+  constructor(
+    baseUrl: string,
+    apiToken: string,
+    concurrency?: number,
+    userAgent?: string,
+    retry?: RetryConfig | false,
+    hooks?: HttpClientHooks,
+  ) {
     this.baseUrl = baseUrl;
     this.apiToken = apiToken;
     this.maxConcurrency = concurrency ?? DEFAULT_CONCURRENCY;
     this.userAgent = userAgent;
+    this.retryConfig = resolveRetryConfig(retry);
+    this.sleep = hooks?.sleep ?? sleep;
+    this.random = hooks?.random ?? Math.random;
   }
 
+  /**
+   * Executes a request, retrying transient failures with exponential backoff
+   * (issue #40). Only GET requests are retried; every other method is attempted
+   * exactly once. Each attempt holds a concurrency slot only while it is in
+   * flight — the slot is released during a backoff sleep and re-acquired for the
+   * next attempt, so a waiting retry never starves other requests.
+   */
   async request<T>(options: HttpRequestOptions): Promise<T> {
-    await this.acquireSlot();
-    try {
-      return await this.executeRequest<T>(options);
-    } finally {
+    const canRetry = options.method === 'GET' && this.retryConfig.maxRetries > 0;
+
+    for (let attempt = 0; ; attempt++) {
+      await this.acquireSlot();
+      let result: T;
+      try {
+        result = await this.executeRequest<T>(options);
+      } catch (error) {
+        // The slot is still held here; release it on every exit path below
+        // before returning control (so a backoff sleep holds no capacity).
+        const willRetry =
+          canRetry && attempt < this.retryConfig.maxRetries && isRetryableError(error, this.retryConfig);
+        this.releaseSlot();
+        if (!willRetry) throw error;
+
+        // Prefer a Retry-After delay when present; otherwise exponential backoff.
+        const delay =
+          retryAfterDelay(error, this.retryConfig) ??
+          computeBackoff(attempt, this.retryConfig.baseDelayMs, this.retryConfig.maxDelayMs, this.random);
+        debugWarn(
+          `Retrying ${options.method} ${options.path} after transient failure ` +
+          `(attempt ${attempt + 1}/${this.retryConfig.maxRetries}); waiting ${delay}ms`,
+          error,
+        );
+        await this.sleep(delay);
+        continue;
+      }
       this.releaseSlot();
+      return result;
     }
   }
 
@@ -127,6 +180,7 @@ export class HttpClient {
         responseBody,
         requestUrl: url,
         requestMethod: options.method,
+        retryAfter: response.headers.get('Retry-After') ?? undefined,
       });
     }
 

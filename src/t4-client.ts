@@ -58,7 +58,7 @@ export class T4Client {
 
     const userAgent = buildUserAgent(getSdkVersion(), config.userAgent);
 
-    this.httpClient = new HttpClient(baseUrl, config.apiToken, config.concurrency, userAgent);
+    this.httpClient = new HttpClient(baseUrl, config.apiToken, config.concurrency, userAgent, config.retry);
     this.defaultLanguage = config.language ?? 'en';
 
     this.contentTypes = new ContentTypeResource(this.httpClient);

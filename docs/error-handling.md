@@ -61,6 +61,10 @@ try {
 
 Prefer the `bodyReadFailed` flag over inspecting `statusText`: the flag is the stable, machine-checkable signal.
 
+### Automatic retry
+
+The SDK retries transient failures for **GET** requests automatically — `429`/`502`/`503`/`504` and network errors (`statusCode: 0`) — with exponential backoff, so a `T4ApiError` from a GET surfaces only after the retry budget is exhausted. A body-read failure (`bodyReadFailed`) is never retried, because the server may already have acted. Non-GET methods are never auto-retried. This is on by default and configurable (or disabled) via the `retry` client option — see [Automatic retry for transient failures](./getting-started.md#automatic-retry-for-transient-failures).
+
 ## Handle validation errors
 
 Client-side validation throws standard `Error` instances. Messages include the value that failed and valid options when available.
