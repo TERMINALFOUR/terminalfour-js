@@ -49,6 +49,7 @@ export type { MediaListItem } from './media-category-ref.js';
 // Types - export all public interfaces
 export type {
   T4ClientConfig,
+  RetryConfig,
   LanguageOption,
   WaitOption,
   ContentDTO,

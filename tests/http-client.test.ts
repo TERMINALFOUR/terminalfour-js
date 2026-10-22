@@ -23,11 +23,12 @@ describe('HttpClient', () => {
     });
   }
 
-  function mockFetchError(status: number, statusText: string, body?: unknown) {
+  function mockFetchError(status: number, statusText: string, body?: unknown, retryAfter?: string) {
     (globalThis.fetch as ReturnType<typeof vi.fn>).mockResolvedValue({
       ok: false,
       status,
       statusText,
+      headers: { get: (name: string) => (name.toLowerCase() === 'retry-after' ? retryAfter ?? null : null) },
       json: () => Promise.resolve(body ?? {}),
       text: () => Promise.resolve(''),
     });
@@ -200,6 +201,7 @@ describe('HttpClient', () => {
       ok: false,
       status: 500,
       statusText: 'Internal Server Error',
+      headers: { get: () => null },
       json: () => Promise.reject(new Error('invalid json')),
       text: () => Promise.resolve('raw error text'),
     });
@@ -296,7 +298,7 @@ describe('HttpClient', () => {
       (globalThis.fetch as ReturnType<typeof vi.fn>).mockImplementation(async () => {
         callCount++;
         if (callCount === 1) {
-          return { ok: false, status: 500, statusText: 'Error', json: () => Promise.resolve({}), text: () => Promise.resolve('') };
+          return { ok: false, status: 500, statusText: 'Error', headers: { get: () => null }, json: () => Promise.resolve({}), text: () => Promise.resolve('') };
         }
         return { ok: true, text: () => Promise.resolve('{"ok":true}') };
       });
@@ -308,5 +310,154 @@ describe('HttpClient', () => {
       const result = await limitedClient.request<{ ok: boolean }>({ method: 'GET', path: '/ok' });
       expect(result).toEqual({ ok: true });
     });
+  });
+});
+
+describe('HttpClient retry (issue #40)', () => {
+  const baseUrl = 'https://api.example.com';
+  const apiToken = 'tok';
+
+  beforeEach(() => {
+    vi.stubGlobal('fetch', vi.fn());
+  });
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  /** A no-op sleep + fixed random so backoff adds no real delay and is deterministic. */
+  const hooks = { sleep: () => Promise.resolve(), random: () => 0.5 };
+
+  const okResponse = (body: unknown = { ok: true }) => ({
+    ok: true,
+    text: () => Promise.resolve(JSON.stringify(body)),
+  });
+  const errResponse = (status: number, retryAfter?: string) => ({
+    ok: false,
+    status,
+    statusText: 'err',
+    headers: { get: (n: string) => (n.toLowerCase() === 'retry-after' ? retryAfter ?? null : null) },
+    json: () => Promise.resolve({}),
+    text: () => Promise.resolve(''),
+  });
+
+  /** Queues a sequence of fetch outcomes (resolved responses or rejections). */
+  const queueFetch = (outcomes: Array<{ value?: unknown; reject?: unknown }>) => {
+    const fetchMock = globalThis.fetch as ReturnType<typeof vi.fn>;
+    for (const o of outcomes) {
+      if (o.reject !== undefined) fetchMock.mockRejectedValueOnce(o.reject);
+      else fetchMock.mockResolvedValueOnce(o.value);
+    }
+  };
+  const fetchCalls = () => (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls.length;
+
+  it('retries a GET on 503 and succeeds on the second attempt', async () => {
+    const client = new HttpClient(baseUrl, apiToken, undefined, undefined, undefined, hooks);
+    queueFetch([{ value: errResponse(503) }, { value: okResponse({ hi: 1 }) }]);
+
+    const result = await client.request<{ hi: number }>({ method: 'GET', path: '/x' });
+    expect(result).toEqual({ hi: 1 });
+    expect(fetchCalls()).toBe(2);
+  });
+
+  it('retries each configured transient status (429/502/503/504)', async () => {
+    for (const status of [429, 502, 503, 504]) {
+      vi.restoreAllMocks();
+      vi.stubGlobal('fetch', vi.fn());
+      const client = new HttpClient(baseUrl, apiToken, undefined, undefined, undefined, hooks);
+      queueFetch([{ value: errResponse(status) }, { value: okResponse() }]);
+      await client.request({ method: 'GET', path: '/x' });
+      expect(fetchCalls()).toBe(2);
+    }
+  });
+
+  it('retries a GET on a network error (statusCode 0)', async () => {
+    const client = new HttpClient(baseUrl, apiToken, undefined, undefined, undefined, hooks);
+    queueFetch([{ reject: new Error('ECONNRESET') }, { value: okResponse() }]);
+    await client.request({ method: 'GET', path: '/x' });
+    expect(fetchCalls()).toBe(2);
+  });
+
+  it('gives up after maxRetries and throws the last error', async () => {
+    const client = new HttpClient(baseUrl, apiToken, undefined, undefined, { maxRetries: 2 }, hooks);
+    queueFetch([{ value: errResponse(503) }, { value: errResponse(503) }, { value: errResponse(503) }]);
+
+    await expect(client.request({ method: 'GET', path: '/x' })).rejects.toMatchObject({ statusCode: 503 });
+    expect(fetchCalls()).toBe(3); // initial + 2 retries
+  });
+
+  it('does not retry a non-transient status (500)', async () => {
+    const client = new HttpClient(baseUrl, apiToken, undefined, undefined, undefined, hooks);
+    queueFetch([{ value: errResponse(500) }]);
+    await expect(client.request({ method: 'GET', path: '/x' })).rejects.toMatchObject({ statusCode: 500 });
+    expect(fetchCalls()).toBe(1);
+  });
+
+  it('does not retry a non-GET method even on 503', async () => {
+    const client = new HttpClient(baseUrl, apiToken, undefined, undefined, undefined, hooks);
+    queueFetch([{ value: errResponse(503) }]);
+    await expect(client.request({ method: 'POST', path: '/x', body: {} })).rejects.toMatchObject({ statusCode: 503 });
+    expect(fetchCalls()).toBe(1);
+  });
+
+  it('does not retry when disabled via retry: false', async () => {
+    const client = new HttpClient(baseUrl, apiToken, undefined, undefined, false, hooks);
+    queueFetch([{ value: errResponse(503) }]);
+    await expect(client.request({ method: 'GET', path: '/x' })).rejects.toMatchObject({ statusCode: 503 });
+    expect(fetchCalls()).toBe(1);
+  });
+
+  it('does not retry a body-read failure (ambiguous: server may have acted)', async () => {
+    const client = new HttpClient(baseUrl, apiToken, undefined, undefined, undefined, hooks);
+    // ok response whose body read rejects -> bodyReadFailed error, statusCode 0
+    queueFetch([{ value: { ok: true, status: 200, text: () => Promise.reject(new Error('stream dropped')) } }]);
+    await expect(client.request({ method: 'GET', path: '/x' })).rejects.toMatchObject({ bodyReadFailed: true });
+    expect(fetchCalls()).toBe(1);
+  });
+
+  it('honours Retry-After: uses it as the delay, overriding computed backoff', async () => {
+    const delays: number[] = [];
+    const client = new HttpClient(baseUrl, apiToken, undefined, undefined, undefined, {
+      sleep: (ms: number) => { delays.push(ms); return Promise.resolve(); },
+      random: () => 0.5,
+    });
+    queueFetch([{ value: errResponse(503, '2') }, { value: okResponse() }]);
+
+    await client.request({ method: 'GET', path: '/x' });
+    expect(delays).toEqual([2000]); // 2s from Retry-After, not the computed backoff
+  });
+
+  it('releases the concurrency slot during backoff so other requests proceed', async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((r) => { release = r; });
+    let waited = false;
+
+    const client = new HttpClient(baseUrl, apiToken, 1, undefined, undefined, {
+      // The backoff sleep blocks on a gate we control; while it blocks, a second
+      // request must still be able to acquire the single slot and run.
+      sleep: () => gate,
+      random: () => 0.5,
+    });
+
+    (globalThis.fetch as ReturnType<typeof vi.fn>).mockImplementation(async (url: string) => {
+      if (String(url).endsWith('/retrying')) {
+        return waited ? okResponse({ done: 'retry' }) : errResponse(503);
+      }
+      return okResponse({ done: 'other' });
+    });
+
+    const retrying = client.request<{ done: string }>({ method: 'GET', path: '/retrying' });
+    // Let the first attempt fail and enter backoff (blocked on the gate).
+    await Promise.resolve();
+    await Promise.resolve();
+
+    // A second request should run NOW, while the first is mid-backoff.
+    const other = await client.request<{ done: string }>({ method: 'GET', path: '/other' });
+    expect(other).toEqual({ done: 'other' });
+
+    // Now let the backoff finish; the retry proceeds and succeeds.
+    waited = true;
+    release();
+    const result = await retrying;
+    expect(result).toEqual({ done: 'retry' });
   });
 });
