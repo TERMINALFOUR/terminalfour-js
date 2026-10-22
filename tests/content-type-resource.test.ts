@@ -2353,3 +2353,234 @@ describe('ContentTypeResource', () => {
     });
   });
 });
+
+describe('ContentTypeResource length validation (issue #35)', () => {
+  let http: HttpClient;
+  let resource: ContentTypeResource;
+
+  // Real validation-rule responses from a live 8.4.5 instance.
+  const CONTENT_TYPE_RULES = {
+    name: [{ msgTemplate: 'notBlank', required: true }, { msgTemplate: 'maxLength', maxLength: 100 }],
+    description: [{ msgTemplate: 'maxLength', maxLength: 200, required: false }],
+  };
+  const TEMPLATE_ELEMENT_RULES = {
+    name: [{ msgTemplate: 'maxLength', maxLength: 50, required: false }],
+    description: [{ msgTemplate: 'maxLength', maxLength: 200, required: false }],
+  };
+
+  beforeEach(() => {
+    http = mockHttpClient();
+    resource = new ContentTypeResource(http);
+  });
+
+  /** Sentinel a handler returns to signal it did not handle the request. */
+  const UNHANDLED = Symbol('unhandled');
+
+  /** Base mock serving type/editor maps plus both validation-rule endpoints. */
+  const baseMock = (handler: (opts: { method: string; path: string; body?: unknown }) => unknown) => {
+    (http.request as ReturnType<typeof vi.fn>).mockImplementation(async (opts: { method: string; path: string; body?: unknown }) => {
+      if (opts.path === '/type/') return ELEMENT_TYPES;
+      if (opts.path === '/htmlEditor') return HTML_EDITORS;
+      if (opts.path === '/validationrule/contenttype') return CONTENT_TYPE_RULES;
+      if (opts.path === '/validationrule/templateElement') return TEMPLATE_ELEMENT_RULES;
+      const result = handler(opts);
+      if (result === UNHANDLED) throw new Error(`Unexpected: ${opts.method} ${opts.path}`);
+      return result;
+    });
+  };
+
+  const sentPost = () =>
+    (http.request as ReturnType<typeof vi.fn>).mock.calls.some(
+      (c: unknown[]) => (c[0] as { method: string; path: string }).method === 'POST' && (c[0] as { path: string }).path === '/contenttype',
+    );
+  const sentPut = () =>
+    (http.request as ReturnType<typeof vi.fn>).mock.calls.some(
+      (c: unknown[]) => (c[0] as { method: string }).method === 'PUT',
+    );
+
+  describe('create()', () => {
+    it('rejects an over-length content type description and sends no POST', async () => {
+      baseMock(() => UNHANDLED);
+      await expect(
+        resource.create({ name: 'Blog', description: 'x'.repeat(201), elements: [{ name: 'Title', type: 'Plain Text' }] }, { wait: false }),
+      ).rejects.toThrow('Content type description is too long (201 characters). The maximum is 200.');
+      expect(sentPost()).toBe(false);
+    });
+
+    it('rejects an over-length content type name and sends no POST', async () => {
+      baseMock(() => UNHANDLED);
+      await expect(
+        resource.create({ name: 'n'.repeat(101), elements: [{ name: 'Title', type: 'Plain Text' }] }, { wait: false }),
+      ).rejects.toThrow('Content type name is too long (101 characters). The maximum is 100.');
+      expect(sentPost()).toBe(false);
+    });
+
+    it('rejects an over-length element name (limit 50) and sends no POST', async () => {
+      baseMock(() => UNHANDLED);
+      await expect(
+        resource.create({ name: 'Blog', elements: [{ name: 'e'.repeat(51), type: 'Plain Text' }] }, { wait: false }),
+      ).rejects.toThrow('Element "' + 'e'.repeat(51) + '" name is too long (51 characters). The maximum is 50.');
+      expect(sentPost()).toBe(false);
+    });
+
+    it('rejects an over-length element description and sends no POST', async () => {
+      baseMock(() => UNHANDLED);
+      await expect(
+        resource.create({ name: 'Blog', elements: [{ name: 'Title', description: 'd'.repeat(201), type: 'Plain Text' }] }, { wait: false }),
+      ).rejects.toThrow('Element "Title" description is too long (201 characters). The maximum is 200.');
+      expect(sentPost()).toBe(false);
+    });
+
+    it('allows values at exactly the limit and sends the POST', async () => {
+      baseMock((opts) => {
+        if (opts.method === 'POST' && opts.path === '/contenttype') {
+          return { id: 700, name: 'x', alias: 'x', contentTypeElements: [] };
+        }
+        return UNHANDLED;
+      });
+      await resource.create(
+        { name: 'n'.repeat(100), description: 'x'.repeat(200), elements: [{ name: 'e'.repeat(50), description: 'd'.repeat(200), type: 'Plain Text' }] },
+        { wait: false },
+      );
+      expect(sentPost()).toBe(true);
+    });
+
+    it('counts emoji in UTF-16 units (😀 = 2) for the content type name', async () => {
+      baseMock(() => UNHANDLED);
+      // 51 emoji = 102 units > 100 limit.
+      await expect(
+        resource.create({ name: '😀'.repeat(51), elements: [{ name: 'Title', type: 'Plain Text' }] }, { wait: false }),
+      ).rejects.toThrow('Content type name is too long (102 characters). The maximum is 100.');
+      expect(sentPost()).toBe(false);
+    });
+
+    it('skips validation and sends the POST when the rules endpoint fails', async () => {
+      (http.request as ReturnType<typeof vi.fn>).mockImplementation(async (opts: { method: string; path: string }) => {
+        if (opts.path === '/type/') return ELEMENT_TYPES;
+        if (opts.path === '/htmlEditor') return HTML_EDITORS;
+        if (opts.path.startsWith('/validationrule/')) throw new Error('500');
+        if (opts.method === 'POST' && opts.path === '/contenttype') return { id: 701, name: 'x', alias: 'x', contentTypeElements: [] };
+        throw new Error(`Unexpected: ${opts.method} ${opts.path}`);
+      });
+      await resource.create({ name: 'Blog', description: 'x'.repeat(5000), elements: [{ name: 'Title', type: 'Plain Text' }] }, { wait: false });
+      expect(sentPost()).toBe(true);
+    });
+  });
+
+  describe('update() / save()', () => {
+    const ct343 = () => ({
+      id: 343, name: 'Article', alias: 'Article', description: 'Desc', type: 10,
+      minAuthLevel: 2, workflow: 0, enableDirectEdit: true, sharedGroups: [], primaryGroup: 0,
+      contentTypeElements: [
+        { id: 1, contentTypeID: 343, name: 'Name', description: '', type: 1, maxSize: 80, compulsory: true, listId: 0, sequence: 1, alias: 'Name', shown: true },
+        { id: 2, contentTypeID: 343, name: 'Title', description: 'The title', type: 1, maxSize: 100, compulsory: false, listId: 0, sequence: 2, alias: 'Title', shown: true },
+      ],
+    });
+
+    it('rejects an over-length description via update() and sends no PUT', async () => {
+      baseMock((opts) => {
+        if (opts.method === 'GET' && opts.path === '/contenttype/343') return ct343();
+        if (opts.method === 'PUT' && opts.path === '/contenttype/343') return undefined;
+        return UNHANDLED;
+      });
+      await expect(
+        resource.update(343, { description: 'x'.repeat(201) }, { wait: false }),
+      ).rejects.toThrow('Content type description is too long (201 characters). The maximum is 200.');
+      expect(sentPut()).toBe(false);
+    });
+
+    it('rejects an over-length element description via updateFields and sends no PUT', async () => {
+      baseMock((opts) => {
+        if (opts.method === 'GET' && opts.path === '/contenttype/343') return ct343();
+        if (opts.method === 'PUT' && opts.path === '/contenttype/343') return undefined;
+        return UNHANDLED;
+      });
+      await expect(
+        resource.update(343, { updateFields: [{ name: 'Title', description: 'd'.repeat(201) }] }, { wait: false }),
+      ).rejects.toThrow('Element "Title" description is too long (201 characters). The maximum is 200.');
+      expect(sentPut()).toBe(false);
+    });
+
+    it('rejects renaming an element to an over-length name (limit 50) and sends no PUT', async () => {
+      baseMock((opts) => {
+        if (opts.method === 'GET' && opts.path === '/contenttype/343') return ct343();
+        if (opts.method === 'PUT' && opts.path === '/contenttype/343') return undefined;
+        return UNHANDLED;
+      });
+      await expect(
+        resource.update(343, { updateFields: [{ name: 'Title', newName: 'r'.repeat(51) }] }, { wait: false }),
+      ).rejects.toThrow('name is too long (51 characters). The maximum is 50.');
+      expect(sentPut()).toBe(false);
+    });
+
+    it('rejects an over-length added field name via addFields and sends no PUT', async () => {
+      baseMock((opts) => {
+        if (opts.method === 'GET' && opts.path === '/contenttype/343') return ct343();
+        if (opts.method === 'PUT' && opts.path === '/contenttype/343') return undefined;
+        return UNHANDLED;
+      });
+      await expect(
+        resource.update(343, { addFields: [{ name: 'a'.repeat(51), type: 'Plain Text' }] }, { wait: false }),
+      ).rejects.toThrow('name is too long (51 characters). The maximum is 50.');
+      expect(sentPut()).toBe(false);
+    });
+
+    it('allows a within-limit update and sends the PUT', async () => {
+      baseMock((opts) => {
+        if (opts.method === 'GET' && opts.path === '/contenttype/343') return ct343();
+        if (opts.method === 'PUT' && opts.path === '/contenttype/343') return undefined;
+        return UNHANDLED;
+      });
+      await resource.update(343, { description: 'x'.repeat(200), updateFields: [{ name: 'Title', description: 'd'.repeat(200) }] }, { wait: false });
+      expect(sentPut()).toBe(true);
+    });
+
+    it('validates on the mutable get() -> mutate -> save() path', async () => {
+      baseMock((opts) => {
+        if (opts.method === 'GET' && opts.path === '/contenttype/343') return ct343();
+        if (opts.method === 'PUT' && opts.path === '/contenttype/343') return undefined;
+        return UNHANDLED;
+      });
+      const ct = await resource.get(343);
+      ct.description = 'x'.repeat(201);
+      await expect(ct.save({ wait: false })).rejects.toThrow('Content type description is too long (201 characters). The maximum is 200.');
+      expect(sentPut()).toBe(false);
+    });
+
+    it('skips validation and sends the PUT when the rules endpoint fails', async () => {
+      (http.request as ReturnType<typeof vi.fn>).mockImplementation(async (opts: { method: string; path: string }) => {
+        if (opts.path === '/type/') return ELEMENT_TYPES;
+        if (opts.path === '/htmlEditor') return HTML_EDITORS;
+        if (opts.path.startsWith('/validationrule/')) throw new Error('500');
+        if (opts.method === 'GET' && opts.path === '/contenttype/343') return ct343();
+        if (opts.method === 'PUT' && opts.path === '/contenttype/343') return undefined;
+        throw new Error(`Unexpected: ${opts.method} ${opts.path}`);
+      });
+      await resource.update(343, { description: 'x'.repeat(5000) }, { wait: false });
+      expect(sentPut()).toBe(true);
+    });
+  });
+
+  it('caches the rule responses (fetched once, reused across operations)', async () => {
+    const ruleCalls: string[] = [];
+    (http.request as ReturnType<typeof vi.fn>).mockImplementation(async (opts: { method: string; path: string }) => {
+      if (opts.path === '/type/') return ELEMENT_TYPES;
+      if (opts.path === '/htmlEditor') return HTML_EDITORS;
+      if (opts.path === '/validationrule/contenttype') { ruleCalls.push(opts.path); return CONTENT_TYPE_RULES; }
+      if (opts.path === '/validationrule/templateElement') { ruleCalls.push(opts.path); return TEMPLATE_ELEMENT_RULES; }
+      throw new Error(`Unexpected: ${opts.method} ${opts.path}`);
+    });
+
+    // Two over-length creates — each throws during validation, before any POST,
+    // so no invalidateAllCaches() runs between them and the cache is reused.
+    await expect(
+      resource.create({ name: 'n'.repeat(101), elements: [{ name: 'Title', type: 'Plain Text' }] }, { wait: false }),
+    ).rejects.toThrow('too long');
+    await expect(
+      resource.create({ name: 'm'.repeat(101), elements: [{ name: 'Title', type: 'Plain Text' }] }, { wait: false }),
+    ).rejects.toThrow('too long');
+
+    expect(ruleCalls.filter((p) => p === '/validationrule/contenttype')).toHaveLength(1);
+    expect(ruleCalls.filter((p) => p === '/validationrule/templateElement')).toHaveLength(1);
+  });
+});

@@ -104,6 +104,30 @@ await t4.contentTypes.create({
 
 Set `maxSize` yourself to override the default — your value is always used, including `0`. The same defaults apply to `addField()` and `update({ addFields })`. Changing an existing element's size through `updateFields` never applies a default; it only changes what you pass.
 
+### Name and description length limits
+
+T4 limits how long a content type's name and description, and each element's name and description, can be. Sending an over-length value makes the server reject the whole request. The SDK checks these lengths before it sends anything and throws a clear error instead, so a too-long value fails fast:
+
+```typescript
+await t4.contentTypes.create({
+  name: 'Blog Post',
+  description: 'x'.repeat(201),
+  elements: [{ name: 'Title', type: 'Plain Text' }],
+});
+// Error: Content type description is too long (201 characters). The maximum is 200.
+```
+
+The limits are read live from the T4 instance (they are instance-wide, so they are fetched once and cached), which means the SDK always uses whatever your instance enforces. On a typical instance they are:
+
+| Field | Maximum length |
+|---|---|
+| Content type name | 100 |
+| Content type description | 200 |
+| Element name | 50 |
+| Element description | 200 |
+
+Length is measured in JavaScript string units (UTF-16 code units), matching how T4 counts — an emoji such as `😀` counts as 2. The same check runs on `create()`, `update()` (including `addFields` and `updateFields`), `addField()`, and `save()`. If the limits can't be fetched (for example the endpoint is unreachable), the SDK skips the check and lets the server decide, so a transient lookup failure never blocks a valid change.
+
 ### List-based fields
 
 `Select Box`, `Radio Button`, `Check Box`, `Multiple Select`, `Multi-select List`, `Cascading List`, and `Keyword Selector` fields require `listId`:
