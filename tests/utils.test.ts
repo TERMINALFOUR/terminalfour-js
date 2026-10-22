@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach, beforeAll } from 'vitest';
-import { resolveLanguage, toTimestamp, decodeHtmlEntities, debugWarn, invalidateAllCaches, parseFileSize, normaliseBaseUrl, assertNotBrowser, readPrimaryGroup, readSharedGroups, writePrimaryGroup, writeSharedGroups, assertGroupsValid, assertRequired, assertNotEmptyIfPresent, parseDuplicatedSectionId, defaultMaxSizeForType, DEFAULT_MAX_SIZE } from '../src/utils.js';
+import { resolveLanguage, toTimestamp, decodeHtmlEntities, debugWarn, invalidateAllCaches, parseFileSize, normaliseBaseUrl, assertNotBrowser, readPrimaryGroup, readSharedGroups, writePrimaryGroup, writeSharedGroups, assertGroupsValid, assertRequired, assertNotEmptyIfPresent, parseDuplicatedSectionId, defaultMaxSizeForType, DEFAULT_MAX_SIZE, extractMaxLength, assertMaxLength, ValidationRuleSet } from '../src/utils.js';
 
 describe('resolveLanguage', () => {
   it('returns override when provided', () => {
@@ -584,5 +584,65 @@ describe('defaultMaxSizeForType', () => {
 
   it('exposes the fallback default as DEFAULT_MAX_SIZE (80)', () => {
     expect(DEFAULT_MAX_SIZE).toBe(80);
+  });
+});
+
+describe('extractMaxLength', () => {
+  const contentTypeRules: ValidationRuleSet = {
+    name: [{ msgTemplate: 'notBlank', required: true }, { msgTemplate: 'maxLength', maxLength: 100 }],
+    description: [{ msgTemplate: 'maxLength', maxLength: 200, required: false }],
+  };
+
+  it('returns the maxLength of a field with a maxLength rule', () => {
+    expect(extractMaxLength(contentTypeRules, 'name')).toBe(100);
+    expect(extractMaxLength(contentTypeRules, 'description')).toBe(200);
+  });
+
+  it('returns undefined when the field is absent', () => {
+    expect(extractMaxLength(contentTypeRules, 'nope')).toBeUndefined();
+  });
+
+  it('returns undefined when the field has no maxLength rule', () => {
+    expect(extractMaxLength({ name: [{ msgTemplate: 'notBlank', required: true }] }, 'name')).toBeUndefined();
+  });
+
+  it('returns undefined when the rule set is undefined', () => {
+    expect(extractMaxLength(undefined, 'name')).toBeUndefined();
+  });
+
+  it('returns undefined when maxLength is not a positive number', () => {
+    expect(extractMaxLength({ name: [{ msgTemplate: 'maxLength', maxLength: 0 }] }, 'name')).toBeUndefined();
+    expect(extractMaxLength({ name: [{ msgTemplate: 'maxLength' }] }, 'name')).toBeUndefined();
+  });
+
+  it('returns undefined when the field value is not an array', () => {
+    expect(extractMaxLength({ name: 'oops' } as unknown as ValidationRuleSet, 'name')).toBeUndefined();
+  });
+});
+
+describe('assertMaxLength', () => {
+  it('passes when the value is within the limit', () => {
+    expect(() => assertMaxLength('a'.repeat(100), 100, 'Content type name')).not.toThrow();
+  });
+
+  it('throws when the value exceeds the limit, reporting length and max', () => {
+    expect(() => assertMaxLength('a'.repeat(201), 200, 'Content type description'))
+      .toThrow('Content type description is too long (201 characters). The maximum is 200.');
+  });
+
+  it('measures length in JS string units (UTF-16 code units), not code points', () => {
+    // '😀' is one code point but two UTF-16 units, so 100 of them = 200 units.
+    expect(() => assertMaxLength('😀'.repeat(100), 200, 'X')).not.toThrow();
+    expect(() => assertMaxLength('😀'.repeat(101), 200, 'X')).toThrow('is too long (202 characters)');
+  });
+
+  it('no-ops when max is undefined (no known limit)', () => {
+    expect(() => assertMaxLength('a'.repeat(10000), undefined, 'X')).not.toThrow();
+  });
+
+  it('no-ops for empty, null or undefined values', () => {
+    expect(() => assertMaxLength('', 5, 'X')).not.toThrow();
+    expect(() => assertMaxLength(null, 5, 'X')).not.toThrow();
+    expect(() => assertMaxLength(undefined, 5, 'X')).not.toThrow();
   });
 });
