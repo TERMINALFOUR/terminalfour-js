@@ -2,11 +2,19 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { SectionRef } from '../src/section-ref.js';
 import { SectionItem } from '../src/models/section-item.js';
 import { HttpClient } from '../src/http-client.js';
-import { assertSectionNotMirroredCached } from '../src/utils.js';
+import { assertSectionNotMirroredCached, invalidateAllCaches } from '../src/utils.js';
 
 function mockHttpClient() {
   return { request: vi.fn() } as unknown as HttpClient;
 }
+
+/** Section length-validation rules from GET /validationrule/section (issue #49). */
+const SECTION_VALIDATION_RULES = {
+  name: [{ msgTemplate: 'notBlank', required: true }, { msgTemplate: 'maxLength', maxLength: 50 }],
+  'file-name': [{ msgTemplate: 'maxLength', maxLength: 50, required: false }],
+  'output-uri': [{ msgTemplate: 'maxLength', maxLength: 50, required: false }],
+  seo: [{ msgTemplate: 'maxLength', maxLength: 600, required: false }],
+};
 
 const parentSection = {
   id: 233,
@@ -34,6 +42,9 @@ describe('SectionRef', () => {
     ref = new SectionRef(http, 233, 'en');
     // Clear the static meta tag cache between tests
     (SectionRef as unknown as { metaTagCache: unknown }).metaTagCache = null;
+    // Bump the global cache epoch so the per-client section validation-rules
+    // cache (issue #49) can't leak a mocked rule set across tests.
+    invalidateAllCaches();
   });
 
   describe('get()', () => {
@@ -704,6 +715,8 @@ describe('SectionRef', () => {
 
     function setupAddSectionMocks() {
       (http.request as ReturnType<typeof vi.fn>).mockImplementation(async (opts: { method: string; path: string; body?: unknown }) => {
+        // Section length-validation rules (issue #49)
+        if (opts.path === '/validationrule/section') return SECTION_VALIDATION_RULES;
         // Fetch parent section details
         if (opts.method === 'GET' && opts.path === '/hierarchy/233/en') return parentSection;
         // Create section
@@ -2454,5 +2467,122 @@ describe('SectionRef — read-only guard for a mirrored section', () => {
       .map((c: unknown[]) => c[0] as { method: string })
       .find((o) => o.method === 'MOVE');
     expect(moveCall).toBeDefined();
+  });
+});
+
+describe('SectionRef — length validation (#49)', () => {
+  let http: HttpClient;
+  let ref: SectionRef;
+
+  const parent = {
+    id: 233, name: 'Parent', parent: 100,
+    channels: [{ id: 3, pageLayout: 0, inheritedPageLayout: 0 }],
+    accessControl: { id: 0, type: 38, enabled: false, active: false },
+    metaData: { id: 0, type: 0, enabled: false, active: false },
+  };
+
+  beforeEach(() => {
+    http = mockHttpClient();
+    ref = new SectionRef(http, 233, 'en');
+    invalidateAllCaches();
+  });
+
+  describe('addSection()', () => {
+    it('rejects an over-length name before creating and makes no POST', async () => {
+      const calls: Array<{ method: string; path: string }> = [];
+      (http.request as ReturnType<typeof vi.fn>).mockImplementation(async (opts: { method: string; path: string }) => {
+        calls.push(opts);
+        if (opts.path === '/validationrule/section') return SECTION_VALIDATION_RULES;
+        if (opts.method === 'GET' && opts.path === '/hierarchy/233/en') return parent;
+        throw new Error(`Unexpected: ${opts.method} ${opts.path}`);
+      });
+
+      await expect(ref.addSection({ name: 'x'.repeat(51) })).rejects.toThrow(
+        'Section name is too long (51 characters). The maximum is 50.',
+      );
+      expect(calls.some((c) => c.method === 'POST')).toBe(false);
+    });
+
+    it('allows a name at the limit', async () => {
+      (http.request as ReturnType<typeof vi.fn>).mockImplementation(async (opts: { method: string; path: string; body?: unknown }) => {
+        if (opts.path === '/validationrule/section') return SECTION_VALIDATION_RULES;
+        if (opts.method === 'GET' && opts.path === '/hierarchy/233/en') return parent;
+        if (opts.method === 'POST' && opts.path === '/hierarchy/en') return { id: 500, name: 'x'.repeat(50), parent: 233 };
+        if (opts.method === 'GET' && opts.path === '/hierarchy/500/en') return { id: 500, name: 'x'.repeat(50), parent: 233 };
+        if (opts.path === '/config/hierarchy.metaDataContentType') return { name: 'x', type: 'contentType', value: '0' };
+        return undefined;
+      });
+
+      await expect(ref.addSection({ name: 'x'.repeat(50) })).resolves.toBeDefined();
+    });
+  });
+
+  describe('update()', () => {
+    const currentSection = { id: 233, name: 'Old', parent: 100, status: '0', show: true, channels: [] };
+
+    it('rejects an over-length name before PUTting', async () => {
+      const calls: Array<{ method: string; path: string }> = [];
+      (http.request as ReturnType<typeof vi.fn>).mockImplementation(async (opts: { method: string; path: string }) => {
+        calls.push(opts);
+        if (opts.path === '/validationrule/section') return SECTION_VALIDATION_RULES;
+        if (opts.method === 'GET' && opts.path === '/hierarchy/233/en') return currentSection;
+        if (opts.method === 'PUT' && opts.path === '/hierarchy/233/en') return undefined;
+        throw new Error(`Unexpected: ${opts.method} ${opts.path}`);
+      });
+
+      await expect(ref.update({ name: 'x'.repeat(51) })).rejects.toThrow(
+        'Section name is too long (51 characters). The maximum is 50.',
+      );
+      expect(calls.some((c) => c.method === 'PUT')).toBe(false);
+    });
+
+    it('does not validate length when name is omitted', async () => {
+      const calls: Array<{ method: string; path: string }> = [];
+      (http.request as ReturnType<typeof vi.fn>).mockImplementation(async (opts: { method: string; path: string; body?: unknown }) => {
+        calls.push(opts);
+        if (opts.method === 'GET' && opts.path === '/hierarchy/233/en') return { ...currentSection };
+        if (opts.method === 'PUT' && opts.path === '/hierarchy/233/en') return undefined;
+        throw new Error(`Unexpected: ${opts.method} ${opts.path}`);
+      });
+
+      await expect(ref.update({ status: 'pending' })).resolves.toBeDefined();
+      expect(calls.some((c) => c.path === '/validationrule/section')).toBe(false);
+    });
+  });
+
+  describe('caching', () => {
+    it('fetches GET /validationrule/section once across multiple operations', async () => {
+      const calls: Array<{ method: string; path: string }> = [];
+      (http.request as ReturnType<typeof vi.fn>).mockImplementation(async (opts: { method: string; path: string }) => {
+        calls.push(opts);
+        if (opts.path === '/validationrule/section') return SECTION_VALIDATION_RULES;
+        if (opts.method === 'GET' && opts.path === '/hierarchy/233/en') return { id: 233, name: 'Old', parent: 100, status: '0', show: true, channels: [] };
+        if (opts.method === 'PUT' && opts.path === '/hierarchy/233/en') return undefined;
+        throw new Error(`Unexpected: ${opts.method} ${opts.path}`);
+      });
+
+      await ref.update({ name: 'First' });
+      await ref.update({ name: 'Second' });
+
+      const ruleFetches = calls.filter((c) => c.path === '/validationrule/section');
+      expect(ruleFetches).toHaveLength(1);
+    });
+
+    it('shares the cache across SectionRef instances on the same client', async () => {
+      const calls: Array<{ method: string; path: string }> = [];
+      (http.request as ReturnType<typeof vi.fn>).mockImplementation(async (opts: { method: string; path: string }) => {
+        calls.push(opts);
+        if (opts.path === '/validationrule/section') return SECTION_VALIDATION_RULES;
+        if (opts.method === 'GET') return { id: 1, name: 'Old', parent: 100, status: '0', show: true, channels: [] };
+        if (opts.method === 'PUT') return undefined;
+        throw new Error(`Unexpected: ${opts.method} ${opts.path}`);
+      });
+
+      await new SectionRef(http, 1, 'en').update({ name: 'A' });
+      await new SectionRef(http, 2, 'en').update({ name: 'B' });
+
+      const ruleFetches = calls.filter((c) => c.path === '/validationrule/section');
+      expect(ruleFetches).toHaveLength(1);
+    });
   });
 });
