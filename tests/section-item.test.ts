@@ -1,10 +1,31 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { SectionItem } from '../src/models/section-item.js';
 import { HttpClient } from '../src/http-client.js';
+import { invalidateAllCaches } from '../src/utils.js';
 
 function mockHttpClient() {
   return { request: vi.fn() } as unknown as HttpClient;
 }
+
+/**
+ * Finds the `PUT /hierarchy/...` section-write call among the mocked requests.
+ * `save()` first fetches `GET /validationrule/section` (issue #49), so the PUT
+ * is no longer guaranteed to be the first call — locate it by predicate.
+ */
+function findPut(http: HttpClient): { method: string; path: string; body: Record<string, any> } {
+  const calls = (http.request as ReturnType<typeof vi.fn>).mock.calls;
+  const put = calls.map((c) => c[0]).find((o) => o.method === 'PUT' && String(o.path).startsWith('/hierarchy/'));
+  if (!put) throw new Error('No PUT /hierarchy request was made');
+  return put;
+}
+
+// The section validation-rules cache is keyed by HttpClient instance and
+// respects the global cache epoch. Bump the epoch before each test so a mocked
+// rule set from one test never leaks into the next (each test uses a fresh
+// mock HttpClient, but belt-and-braces).
+beforeEach(() => {
+  invalidateAllCaches();
+});
 
 const rawSection = {
   id: 233,
@@ -113,40 +134,39 @@ describe('SectionItem', () => {
 
     it('sends PUT with full section body and updated name', async () => {
       const http = mockHttpClient();
-      (http.request as ReturnType<typeof vi.fn>).mockResolvedValueOnce(undefined);
+      (http.request as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
 
       const item = new SectionItem(rawSection, http, 'en');
       item.name = 'Updated';
       await item.save();
 
-      const callArgs = (http.request as ReturnType<typeof vi.fn>).mock.calls[0][0];
-      expect(callArgs.method).toBe('PUT');
-      expect(callArgs.path).toBe('/hierarchy/233/en');
-      expect(callArgs.body.name).toBe('Updated');
-      expect(callArgs.body.channels).toEqual(rawSection.channels);
+      const put = findPut(http);
+      expect(put.method).toBe('PUT');
+      expect(put.path).toBe('/hierarchy/233/en');
+      expect(put.body.name).toBe('Updated');
+      expect(put.body.channels).toEqual(rawSection.channels);
     });
 
     it('maps status back to code on save', async () => {
       const http = mockHttpClient();
-      (http.request as ReturnType<typeof vi.fn>).mockResolvedValueOnce(undefined);
+      (http.request as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
 
       const item = new SectionItem(rawSection, http, 'en');
       item.status = 'pending';
       await item.save();
 
-      const body = (http.request as ReturnType<typeof vi.fn>).mock.calls[0][0].body;
-      expect(body.status).toBe('1');
+      expect(findPut(http).body.status).toBe('1');
     });
 
     it('preserves all other section properties', async () => {
       const http = mockHttpClient();
-      (http.request as ReturnType<typeof vi.fn>).mockResolvedValueOnce(undefined);
+      (http.request as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
 
       const item = new SectionItem(rawSection, http, 'en');
       item.show = false;
       await item.save();
 
-      const body = (http.request as ReturnType<typeof vi.fn>).mock.calls[0][0].body;
+      const body = findPut(http).body;
       expect(body.show).toBe(false);
       expect(body.id).toBe(233);
       expect(body.parent).toBe(100);
@@ -406,6 +426,112 @@ describe('SectionItem — read-only guard', () => {
     (http.request as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
     const item = new SectionItem(rawSection, http, 'en');
     item.name = 'Changed';
+    await expect(item.save()).resolves.toBeUndefined();
+  });
+});
+
+describe('SectionItem — length validation (#49)', () => {
+  const SECTION_RULES = {
+    name: [{ msgTemplate: 'notBlank', required: true }, { msgTemplate: 'maxLength', maxLength: 50 }],
+    'file-name': [{ msgTemplate: 'maxLength', maxLength: 50, required: false }],
+    'output-uri': [{ msgTemplate: 'maxLength', maxLength: 50, required: false }],
+    seo: [{ msgTemplate: 'maxLength', maxLength: 600, required: false }],
+  };
+
+  /** Mocks GET /validationrule/section; everything else resolves undefined. */
+  function withRules(http: HttpClient, rules: unknown = SECTION_RULES): Array<{ method: string; path: string }> {
+    const calls: Array<{ method: string; path: string }> = [];
+    (http.request as ReturnType<typeof vi.fn>).mockImplementation(async (opts: { method: string; path: string }) => {
+      calls.push(opts);
+      if (opts.path === '/validationrule/section') return rules;
+      return undefined;
+    });
+    return calls;
+  }
+
+  it('rejects an over-length name before writing', async () => {
+    const http = mockHttpClient();
+    const calls = withRules(http);
+    const item = new SectionItem(rawSection, http, 'en');
+    item.name = 'x'.repeat(51);
+
+    await expect(item.save()).rejects.toThrow(
+      'Section name is too long (51 characters). The maximum is 50.',
+    );
+    expect(calls.some((c) => c.method === 'PUT')).toBe(false);
+  });
+
+  it('rejects an over-length filename before writing', async () => {
+    const http = mockHttpClient();
+    const calls = withRules(http);
+    const item = new SectionItem(rawSection, http, 'en');
+    item.filename = 'f'.repeat(51);
+
+    await expect(item.save()).rejects.toThrow(
+      'Section filename is too long (51 characters). The maximum is 50.',
+    );
+    expect(calls.some((c) => c.method === 'PUT')).toBe(false);
+  });
+
+  it('rejects an over-length output URI before writing', async () => {
+    const http = mockHttpClient();
+    const calls = withRules(http);
+    const item = new SectionItem(rawSection, http, 'en');
+    item.outputUri = 'o'.repeat(51);
+
+    await expect(item.save()).rejects.toThrow(
+      'Section output URI is too long (51 characters). The maximum is 50.',
+    );
+    expect(calls.some((c) => c.method === 'PUT')).toBe(false);
+  });
+
+  it('allows values exactly at the limit', async () => {
+    const http = mockHttpClient();
+    withRules(http);
+    const item = new SectionItem(rawSection, http, 'en');
+    item.name = 'n'.repeat(50);
+    item.filename = 'f'.repeat(50);
+    item.outputUri = 'o'.repeat(50);
+
+    await expect(item.save()).resolves.toBeUndefined();
+  });
+
+  it('measures length in UTF-16 units (an emoji counts as 2)', async () => {
+    const http = mockHttpClient();
+    withRules(http);
+    const item = new SectionItem(rawSection, http, 'en');
+    // 25 emoji = 50 UTF-16 code units — at the limit, allowed.
+    item.name = '\u{1F600}'.repeat(25);
+    await expect(item.save()).resolves.toBeUndefined();
+
+    // 26 emoji = 52 units — over the limit.
+    item.name = '\u{1F600}'.repeat(26);
+    await expect(item.save()).rejects.toThrow(
+      'Section name is too long (52 characters). The maximum is 50.',
+    );
+  });
+
+  it('skips validation when the rules fetch fails (server is the backstop)', async () => {
+    const http = mockHttpClient();
+    const calls: Array<{ method: string; path: string }> = [];
+    (http.request as ReturnType<typeof vi.fn>).mockImplementation(async (opts: { method: string; path: string }) => {
+      calls.push(opts);
+      if (opts.path === '/validationrule/section') throw new Error('500');
+      return undefined;
+    });
+    const item = new SectionItem(rawSection, http, 'en');
+    item.name = 'x'.repeat(100);
+
+    await expect(item.save()).resolves.toBeUndefined();
+    expect(calls.some((c) => c.method === 'PUT')).toBe(true);
+  });
+
+  it('skips a field with no maxLength rule', async () => {
+    const http = mockHttpClient();
+    withRules(http, { name: [{ msgTemplate: 'notBlank', required: true }] });
+    const item = new SectionItem(rawSection, http, 'en');
+    item.name = 'x'.repeat(100);
+
     await expect(item.save()).resolves.toBeUndefined();
   });
 });

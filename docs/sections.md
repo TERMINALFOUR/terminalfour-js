@@ -66,6 +66,26 @@ await section.save();
 
 The SDK will throw when no metadata content type is configured on the instance and you attempt add customFields.
 
+### Field length limits
+
+T4 limits how long a section's name, filename, and output URI can be. The SDK checks these lengths before it sends anything and throws a clear error instead, so a too-long value fails fast:
+
+```typescript
+await t4.section(233).addSection({
+  name: 'x'.repeat(51),
+});
+// Error: Section name is too long (51 characters). The maximum is 50.
+```
+
+The limits are read live from the T4 instance (they are instance-wide, so they are fetched once and cached), which means the SDK always uses whatever your instance enforces. On a typical instance they are:
+
+| Field | Maximum length |
+|---|---|
+| Section name | 50 |
+| Section filename | 50 |
+| Section output URI | 50 |
+| SEO keyphrases | 600 |
+
 ## Create, delete, purge, move, or mirror
 
 ### Create a child section
