@@ -6,7 +6,7 @@ import {
   AddSectionData,
   ApiSectionDTO,
 } from './types.js';
-import { resolveLanguage, mapStatus, flattenGroups, STATUS_CODES, AUTH_LEVEL_MAP, debugWarn, DEFAULT_CACHE_TTL, getCacheEpoch, assertRequired, assertNotEmptyIfPresent, assertSectionNotMirrored, assertSectionNotMirroredCached, cacheSectionMirrorStatus, parseDuplicatedSectionId } from './utils.js';
+import { resolveLanguage, mapStatus, flattenGroups, STATUS_CODES, AUTH_LEVEL_MAP, debugWarn, DEFAULT_CACHE_TTL, getCacheEpoch, assertRequired, assertNotEmptyIfPresent, assertSectionNotMirrored, assertSectionNotMirroredCached, cacheSectionMirrorStatus, parseDuplicatedSectionId, TtlValue, ValidationRuleSet, extractMaxLength, assertMaxLength } from './utils.js';
 import { ContentResource } from './resources/content-resource.js';
 import { SectionItem } from './models/section-item.js';
 import { SubsectionList } from './models/subsection-list.js';
@@ -83,6 +83,126 @@ const metaTagCacheMap = new WeakMap<HttpClient, { data: MetaTagDefinition[]; exp
 /** Clears the meta tag cache for a specific HttpClient instance */
 export function clearMetaTagCache(httpClient: HttpClient): void {
   metaTagCacheMap.delete(httpClient);
+}
+
+/**
+ * Maps an SDK-facing section field name to the API field key used in the
+ * `GET /validationrule/section` rule set, so {@link extractMaxLength} looks up
+ * the right limit. The API keys are hyphenated and differ from the SDK's
+ * camelCase property names.
+ */
+const SECTION_FIELD_TO_RULE_KEY = {
+  name: 'name',
+  filename: 'file-name',
+  outputUri: 'output-uri',
+  seo: 'seo',
+} as const;
+
+/** Human-readable labels used in the over-length error for each section field. */
+const SECTION_FIELD_LABELS = {
+  name: 'Section name',
+  filename: 'Section filename',
+  outputUri: 'Section output URI',
+  seo: 'Section SEO keyphrases',
+} as const;
+
+/**
+ * Fetches and caches the T4 length-validation rules for sections.
+ *
+ * T4 limits the length of a section's name, filename, output URI, and SEO
+ * keyphrases, and an over-length value can leave a section in a persistently
+ * broken state — you cannot add content to it, and reading it back through the
+ * SDK throws (issue #49). This is the same class of bug as the content type
+ * length validation (#35) and shares its rule-set shape, but the severity is
+ * higher, so the SDK validates up front rather than letting the write through.
+ *
+ * The limits come from `GET /validationrule/section`; they are instance-wide and
+ * effectively static, so the response is cached in a `TtlValue` (the same TTL +
+ * global cache-epoch mechanism as every other SDK cache, so `clearCache()`
+ * invalidates it). One instance is shared across every {@link SectionRef} and
+ * {@link SectionItem} using the same `HttpClient` (see
+ * {@link getSectionValidationRules}), so the lookup happens once rather than per
+ * operation.
+ *
+ * A fetch failure or unexpected shape resolves to an empty rule set: validation
+ * is skipped and the write proceeds, so a transient lookup failure never blocks
+ * a legitimate change — the server remains the backstop.
+ */
+export class SectionValidationRules {
+  private readonly httpClient: HttpClient;
+  private readonly cache = new TtlValue<ValidationRuleSet>();
+  private promise: Promise<ValidationRuleSet> | null = null;
+
+  constructor(httpClient: HttpClient) {
+    this.httpClient = httpClient;
+  }
+
+  /**
+   * Returns the cached rule set, or fetches it once (deduping concurrent calls
+   * via the in-flight promise). On any error the result is an empty rule set so
+   * callers skip validation rather than block the write.
+   */
+  section(): Promise<ValidationRuleSet> {
+    const cached = this.cache.get();
+    if (cached) return Promise.resolve(cached);
+    if (this.promise) return this.promise;
+
+    this.promise = this.httpClient
+      .request<ValidationRuleSet>({ method: 'GET', path: '/validationrule/section' })
+      .then((rules) => {
+        const value = rules && typeof rules === 'object' ? rules : {};
+        this.cache.set(value);
+        this.promise = null;
+        return value;
+      })
+      .catch((error) => {
+        debugWarn('Failed to fetch validation rules from /validationrule/section; skipping length validation', error);
+        this.promise = null;
+        return {} as ValidationRuleSet;
+      });
+
+    return this.promise;
+  }
+}
+
+/** Per-client cache of section validation rules, keyed by HttpClient instance. */
+const sectionValidationRulesMap = new WeakMap<HttpClient, SectionValidationRules>();
+
+/**
+ * Returns the {@link SectionValidationRules} shared across all section
+ * operations on a given `HttpClient`, creating it on first use. Sharing by
+ * client keeps the `GET /validationrule/section` lookup global rather than
+ * per-`SectionRef`, since each `t4.section(id)` call creates a fresh reference.
+ */
+export function getSectionValidationRules(httpClient: HttpClient): SectionValidationRules {
+  let rules = sectionValidationRulesMap.get(httpClient);
+  if (!rules) {
+    rules = new SectionValidationRules(httpClient);
+    sectionValidationRulesMap.set(httpClient, rules);
+  }
+  return rules;
+}
+
+/** The settable section fields that carry a length limit. */
+type SectionLengthField = keyof typeof SECTION_FIELD_TO_RULE_KEY;
+
+/**
+ * Validates the length of one or more section fields against the T4 limits from
+ * `GET /validationrule/section`, throwing a clear error before any write when a
+ * value exceeds its limit. Only the fields present in `values` are checked, so a
+ * caller can validate just the fields it is about to change. Fetches the rule
+ * set once (cached per client); a missing limit for a field means "do not
+ * validate" and is silently skipped.
+ */
+export async function validateSectionFieldLengths(
+  httpClient: HttpClient,
+  values: Partial<Record<SectionLengthField, string | null | undefined>>,
+): Promise<void> {
+  const rules = await getSectionValidationRules(httpClient).section();
+  for (const field of Object.keys(values) as SectionLengthField[]) {
+    const max = extractMaxLength(rules, SECTION_FIELD_TO_RULE_KEY[field]);
+    assertMaxLength(values[field], max, SECTION_FIELD_LABELS[field]);
+  }
 }
 
 /**
@@ -824,6 +944,10 @@ export class SectionRef {
    */
   async addSection(data: Omit<AddSectionData, 'parentId'>, options?: LanguageOption): Promise<SectionItem> {
     assertRequired(data.name, 'Section name');
+    // Validate name length before any request so an over-length name can't
+    // create a section in a broken state (issue #49). Only name is settable
+    // through addSection — filename/output-uri/seo go out empty.
+    await validateSectionFieldLengths(this.httpClient, { name: data.name });
     const language = resolveLanguage(options?.language, this.defaultLanguage);
 
     // Fetch this section's details to inherit config
@@ -1173,6 +1297,11 @@ export class SectionRef {
     // guard the name here. Present-only: omitting name is valid, but setting it
     // blank is not.
     assertNotEmptyIfPresent(data.name, 'Section name');
+    // Validate name length up front (issue #49). name is the only
+    // length-limited field this path changes; when omitted, nothing to check.
+    if (data.name !== undefined) {
+      await validateSectionFieldLengths(this.httpClient, { name: data.name });
+    }
     const language = resolveLanguage(options?.language, this.defaultLanguage);
 
     const section = await this.httpClient.request<ApiSectionDTO>({

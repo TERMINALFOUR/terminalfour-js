@@ -3,6 +3,7 @@ import { mapStatus, STATUS_CODES, assertRequired, assertSectionNotMirrored } fro
 import { ApiSectionDTO } from '../types.js';
 import { ContentResource } from '../resources/content-resource.js';
 import { MediaCreateFn } from '../element-resolver.js';
+import { validateSectionFieldLengths } from '../section-ref.js';
 
 /**
  * A mutable section object. Modify properties and call save() to persist.
@@ -71,8 +72,19 @@ export class SectionItem {
   /** Persists current property values to the server via PUT. */
   async save(): Promise<void> {
     assertRequired(this.name, 'Section name');
-    // A mirrored section is read-only; block saves (uses the in-memory DTO, no fetch).
+    // A mirrored section is read-only; block saves (uses the in-memory DTO, no
+    // fetch). Runs before length validation so a mirrored section is rejected
+    // without any network call.
     assertSectionNotMirrored(this._httpClient, this.id, this._rawData);
+    // Validate the length of every settable, length-limited field against the
+    // T4 limits before writing, so an over-length value can't leave the section
+    // in a broken state (issue #49). name, filename, and outputUri are the
+    // settable length-limited properties (SEO keyphrases aren't settable here).
+    await validateSectionFieldLengths(this._httpClient, {
+      name: this.name,
+      filename: this.filename,
+      outputUri: this.outputUri,
+    });
 
     const statusCode = STATUS_CODES[this.status] ?? Number(this._rawData.status) ?? 0;
 
