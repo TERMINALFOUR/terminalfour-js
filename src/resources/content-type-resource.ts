@@ -1,6 +1,6 @@
 import { HttpClient } from '../http-client.js';
 import { ContentTypeData, ContentTypeFieldDef, WaitOption } from '../types.js';
-import { decodeHtmlEntities, AUTH_LEVEL_MAP, AUTH_LEVEL_REVERSE, debugWarn, DEFAULT_CACHE_TTL, DEFAULT_WRITE_WAIT_TIMEOUT, WRITE_WAIT_POLL_INTERVAL, sleep, getCacheEpoch, invalidateAllCaches, readPrimaryGroup, readSharedGroups, writePrimaryGroup, writeSharedGroups, assertGroupsValid, assertRequired, assertNotEmptyIfPresent, defaultMaxSizeForType, extractMaxLength, assertMaxLength, TtlValue, ValidationRuleSet, RawPrimaryGroup } from '../utils.js';
+import { decodeHtmlEntities, AUTH_LEVEL_MAP, AUTH_LEVEL_REVERSE, debugWarn, DEFAULT_CACHE_TTL, DEFAULT_WRITE_WAIT_TIMEOUT, WRITE_WAIT_POLL_INTERVAL, sleep, getCacheEpoch, invalidateAllCaches, readPrimaryGroup, readSharedGroups, writePrimaryGroup, writeSharedGroups, assertGroupsValid, assertRequired, assertNotEmptyIfPresent, suffixNameForUniqueness, defaultMaxSizeForType, extractMaxLength, assertMaxLength, TtlValue, ValidationRuleSet, RawPrimaryGroup } from '../utils.js';
 
 /** Raw content type element from the API response */
 interface ApiContentTypeElement {
@@ -119,6 +119,16 @@ export class ValidationRules {
     for (const element of elements) {
       this.assertElementAgainst(element, elementRules);
     }
+  }
+
+  /**
+   * Throws if a content type name exceeds the live T4 limit. Used to re-check a
+   * name after auto-suffixing, since the ` (n)` suffix can push a name that was
+   * within the limit over it. Skips silently when the rules are unavailable.
+   */
+  async assertContentTypeName(name: string): Promise<void> {
+    const rules = await this.contentType();
+    assertMaxLength(name, extractMaxLength(rules, 'name'), 'Content type name');
   }
 
   private assertElementAgainst(element: NamedDescribed, rules: ValidationRuleSet): void {
@@ -1401,7 +1411,17 @@ export class ContentTypeResource {
     invalidateAllCaches();
   }
 
-  /** Creates a new content type. */
+  /**
+   * Creates a new content type.
+   *
+   * Matches the T4 UI: a name that collides with an existing content type is
+   * auto-suffixed with ` (n)` before sending. Existing names are decoded so the
+   * comparison is against friendly names, as the UI shows them. The raw name is
+   * length-validated first, so an over-length name fails without a list request
+   * (suffixing only lengthens a name). The suffixed name is validated again via
+   * `ValidationRules.assertContentTypeName`. The existing-names fetch is not
+   * error-swallowed: if names cannot be read, uniqueness cannot be guaranteed.
+   */
   async create(data: {
     name: string;
     description?: string;
@@ -1453,6 +1473,16 @@ export class ContentTypeResource {
     }
 
     await this.validationRules.assertContentType(data, data.elements);
+
+    const existing = await this.httpClient.request<ApiContentType[]>({
+      method: 'GET',
+      path: '/contenttype?excludeElements=true',
+    });
+    const existingNames = existing.map((ct) => decodeHtmlEntities(ct.alias || ct.name));
+    const uniqueName = suffixNameForUniqueness(data.name, existingNames);
+    if (uniqueName !== data.name.trim()) {
+      await this.validationRules.assertContentTypeName(uniqueName);
+    }
 
     const typeMap = await this.getTypeMap();
     const reverseTypeMap = new Map(Array.from(typeMap.entries()).map(([id, name]) => [name.toLowerCase(), id]));
@@ -1568,7 +1598,7 @@ export class ContentTypeResource {
       method: 'POST',
       path: '/contenttype',
       body: {
-        name: data.name,
+        name: uniqueName,
         description: data.description ?? '',
         type: 10,
         editable: true,

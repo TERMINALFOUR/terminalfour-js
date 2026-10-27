@@ -259,6 +259,7 @@ describe('ContentTypeResource', () => {
     (http.request as ReturnType<typeof vi.fn>).mockImplementation(async (opts: { method: string; path: string }) => {
       if (opts.path === '/type/') return ELEMENT_TYPES;
       if (opts.path === '/htmlEditor') return HTML_EDITORS;
+      if (opts.method === 'GET' && opts.path === '/contenttype?excludeElements=true') return [];
       if (opts.method === 'POST' && opts.path === '/contenttype') return {
         id: 500, name: 'New CT', alias: 'New CT', description: '',
         contentTypeElements: [
@@ -1448,6 +1449,7 @@ describe('ContentTypeResource', () => {
     (http.request as ReturnType<typeof vi.fn>).mockImplementation(async (opts: { method: string; path: string }) => {
       if (opts.path === '/type/') return ELEMENT_TYPES;
       if (opts.path === '/htmlEditor') return HTML_EDITORS;
+      if (opts.method === 'GET' && opts.path === '/contenttype?excludeElements=true') return [];
       if (opts.method === 'POST' && opts.path === '/contenttype') return createdResponse;
       throw new Error(`Unexpected: ${opts.method} ${opts.path}`);
     });
@@ -1488,6 +1490,7 @@ describe('ContentTypeResource', () => {
     (http.request as ReturnType<typeof vi.fn>).mockImplementation(async (opts: { path: string }) => {
       if (opts.path === '/type/') return ELEMENT_TYPES;
       if (opts.path === '/htmlEditor') return HTML_EDITORS;
+      if (opts.path === '/contenttype?excludeElements=true') return [];
       throw new Error(`Unexpected: ${opts.path}`);
     });
 
@@ -1499,6 +1502,7 @@ describe('ContentTypeResource', () => {
     (http.request as ReturnType<typeof vi.fn>).mockImplementation(async (opts: { path: string }) => {
       if (opts.path === '/type/') return ELEMENT_TYPES;
       if (opts.path === '/htmlEditor') return HTML_EDITORS;
+      if (opts.path === '/contenttype?excludeElements=true') return [];
       throw new Error(`Unexpected: ${opts.path}`);
     });
 
@@ -1510,6 +1514,7 @@ describe('ContentTypeResource', () => {
     (http.request as ReturnType<typeof vi.fn>).mockImplementation(async (opts: { method: string; path: string }) => {
       if (opts.path === '/type/') return ELEMENT_TYPES;
       if (opts.path === '/htmlEditor') return HTML_EDITORS;
+      if (opts.method === 'GET' && opts.path === '/contenttype?excludeElements=true') return [];
       if (opts.method === 'POST' && opts.path === '/contenttype') return {
         id: 501, name: 'Test', alias: 'Test', contentTypeElements: [],
       };
@@ -1530,6 +1535,7 @@ describe('ContentTypeResource', () => {
     (http.request as ReturnType<typeof vi.fn>).mockImplementation(async (opts: { method: string; path: string }) => {
       if (opts.path === '/type/') return ELEMENT_TYPES;
       if (opts.path === '/htmlEditor') return HTML_EDITORS;
+      if (opts.method === 'GET' && opts.path === '/contenttype?excludeElements=true') return [];
       if (opts.method === 'POST' && opts.path === '/contenttype') return {
         id: 500, name: 'Test', alias: 'Test', contentTypeElements: [],
       };
@@ -1549,6 +1555,7 @@ describe('ContentTypeResource', () => {
     (http.request as ReturnType<typeof vi.fn>).mockImplementation(async (opts: { method: string; path: string }) => {
       if (opts.path === '/type/') return ELEMENT_TYPES;
       if (opts.path === '/htmlEditor') return HTML_EDITORS;
+      if (opts.method === 'GET' && opts.path === '/contenttype?excludeElements=true') return [];
       if (opts.method === 'POST' && opts.path === '/contenttype') return {
         id: 500, name: 'Test', alias: 'Test', contentTypeElements: [],
       };
@@ -1743,6 +1750,7 @@ describe('ContentTypeResource', () => {
     (http.request as ReturnType<typeof vi.fn>).mockImplementation(async (opts: { method: string; path: string }) => {
       if (opts.path === '/type/') return ELEMENT_TYPES;
       if (opts.path === '/htmlEditor') return HTML_EDITORS;
+      if (opts.method === 'GET' && opts.path === '/contenttype?excludeElements=true') return [];
       if (opts.method === 'POST' && opts.path === '/contenttype') return {
         id: 600, name: 'With Repeater', alias: 'With Repeater',
         contentTypeElements: [
@@ -1782,6 +1790,7 @@ describe('ContentTypeResource', () => {
     (http.request as ReturnType<typeof vi.fn>).mockImplementation(async (opts: { method: string; path: string }) => {
       if (opts.path === '/type/') return ELEMENT_TYPES;
       if (opts.path === '/htmlEditor') return HTML_EDITORS;
+      if (opts.method === 'GET' && opts.path === '/contenttype?excludeElements=true') return [];
       if (opts.method === 'POST' && opts.path === '/contenttype') return {
         id: 601, name: 'Test', alias: 'Test', contentTypeElements: [],
       };
@@ -1813,6 +1822,7 @@ describe('ContentTypeResource', () => {
     (http.request as ReturnType<typeof vi.fn>).mockImplementation(async (opts: { path: string }) => {
       if (opts.path === '/type/') return ELEMENT_TYPES;
       if (opts.path === '/htmlEditor') return HTML_EDITORS;
+      if (opts.path === '/contenttype?excludeElements=true') return [];
       throw new Error(`Unexpected: ${opts.path}`);
     });
 
@@ -1826,6 +1836,7 @@ describe('ContentTypeResource', () => {
     (http.request as ReturnType<typeof vi.fn>).mockImplementation(async (opts: { path: string }) => {
       if (opts.path === '/type/') return ELEMENT_TYPES;
       if (opts.path === '/htmlEditor') return HTML_EDITORS;
+      if (opts.path === '/contenttype?excludeElements=true') return [];
       throw new Error(`Unexpected: ${opts.path}`);
     });
 
@@ -1886,6 +1897,7 @@ describe('ContentTypeResource', () => {
       (http.request as ReturnType<typeof vi.fn>).mockImplementation(async (opts: { method: string; path: string }) => {
         if (opts.path === '/type/') return ELEMENT_TYPES;
         if (opts.path === '/htmlEditor') return HTML_EDITORS;
+        if (opts.method === 'GET' && opts.path === '/contenttype?excludeElements=true') return [];
         if (opts.method === 'POST' && opts.path === '/contenttype') return {
           id: 500, name: 'New CT', alias: 'New CT', description: '', type: 10,
           contentTypeElements: [{ id: 1, name: 'Name', type: 1, alias: 'Name', sequence: 1 }],
@@ -2138,6 +2150,7 @@ describe('ContentTypeResource', () => {
       (http.request as ReturnType<typeof vi.fn>).mockImplementation(async (opts: { method: string; path: string }) => {
         if (opts.path === '/type/') return ELEMENT_TYPES;
         if (opts.path === '/htmlEditor') return HTML_EDITORS;
+        if (opts.method === 'GET' && opts.path === '/contenttype?excludeElements=true') return [];
         if (opts.method === 'POST' && opts.path === '/contenttype') {
           return baseCt([nameEl, exampleEl]);
         }
@@ -2165,6 +2178,7 @@ describe('ContentTypeResource', () => {
       (http.request as ReturnType<typeof vi.fn>).mockImplementation(async (opts: { method: string; path: string }) => {
         if (opts.path === '/type/') return ELEMENT_TYPES;
         if (opts.path === '/htmlEditor') return HTML_EDITORS;
+        if (opts.method === 'GET' && opts.path === '/contenttype?excludeElements=true') return [];
         if (opts.method === 'POST' && opts.path === '/contenttype') return baseCt([nameEl, exampleEl]);
         if (opts.method === 'GET' && opts.path === '/contenttype/343') { getCalls.push(opts.path); return baseCt([nameEl, exampleEl]); }
         throw new Error(`Unexpected: ${opts.method} ${opts.path}`);
@@ -2201,6 +2215,7 @@ describe('ContentTypeResource', () => {
       (http.request as ReturnType<typeof vi.fn>).mockImplementation(async (opts: { method: string; path: string; body?: unknown }) => {
         if (opts.path === '/type/') return ELEMENT_TYPES;
         if (opts.path === '/htmlEditor') return HTML_EDITORS;
+        if (opts.method === 'GET' && opts.path === '/contenttype?excludeElements=true') return [];
         if (opts.method === 'POST' && opts.path === '/contenttype') {
           const reqElements = (opts.body as { contentTypeElements?: Array<Record<string, unknown>> }).contentTypeElements ?? [];
           return {
@@ -2384,6 +2399,7 @@ describe('ContentTypeResource length validation (issue #35)', () => {
       if (opts.path === '/htmlEditor') return HTML_EDITORS;
       if (opts.path === '/validationrule/contenttype') return CONTENT_TYPE_RULES;
       if (opts.path === '/validationrule/templateElement') return TEMPLATE_ELEMENT_RULES;
+      if (opts.method === 'GET' && opts.path === '/contenttype?excludeElements=true') return [];
       const result = handler(opts);
       if (result === UNHANDLED) throw new Error(`Unexpected: ${opts.method} ${opts.path}`);
       return result;
@@ -2434,6 +2450,7 @@ describe('ContentTypeResource length validation (issue #35)', () => {
 
     it('allows values at exactly the limit and sends the POST', async () => {
       baseMock((opts) => {
+        if (opts.method === 'GET' && opts.path === '/contenttype?excludeElements=true') return [];
         if (opts.method === 'POST' && opts.path === '/contenttype') {
           return { id: 700, name: 'x', alias: 'x', contentTypeElements: [] };
         }
@@ -2459,6 +2476,7 @@ describe('ContentTypeResource length validation (issue #35)', () => {
         if (opts.path === '/type/') return ELEMENT_TYPES;
         if (opts.path === '/htmlEditor') return HTML_EDITORS;
         if (opts.path.startsWith('/validationrule/')) throw new Error('500');
+        if (opts.method === 'GET' && opts.path === '/contenttype?excludeElements=true') return [];
         if (opts.method === 'POST' && opts.path === '/contenttype') return { id: 701, name: 'x', alias: 'x', contentTypeElements: [] };
         throw new Error(`Unexpected: ${opts.method} ${opts.path}`);
       });
@@ -2667,6 +2685,27 @@ describe('ValidationRules', () => {
     });
   });
 
+  describe('assertContentTypeName()', () => {
+    it('throws for an over-length name with the exact message', async () => {
+      serveRules();
+      await expect(rules.assertContentTypeName('n'.repeat(CONTENT_TYPE_NAME_LIMIT + 1))).rejects.toThrow(
+        `Content type name is too long (${CONTENT_TYPE_NAME_LIMIT + 1} characters). The maximum is ${CONTENT_TYPE_NAME_LIMIT}.`,
+      );
+    });
+    it('passes a name at exactly the limit', async () => {
+      serveRules();
+      await expect(rules.assertContentTypeName('n'.repeat(CONTENT_TYPE_NAME_LIMIT))).resolves.toBeUndefined();
+    });
+    it('skips validation when the name rule is missing', async () => {
+      serveRules({}, {});
+      await expect(rules.assertContentTypeName('n'.repeat(5000))).resolves.toBeUndefined();
+    });
+    it('skips validation when the rules fetch fails', async () => {
+      (http.request as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('500'));
+      await expect(rules.assertContentTypeName('n'.repeat(5000))).resolves.toBeUndefined();
+    });
+  });
+
   describe('assertContentType()', () => {
     it('throws for an over-length content type name', async () => {
       serveRules();
@@ -2713,5 +2752,159 @@ describe('ValidationRules', () => {
         rules.assertContentType({ name: 'n'.repeat(5000) }, [{ name: 'e'.repeat(5000) }]),
       ).resolves.toBeUndefined();
     });
+  });
+});
+
+describe('ContentTypeResource.create() name auto-suffix (#52)', () => {
+  let http: HttpClient;
+  let resource: ContentTypeResource;
+
+  beforeEach(() => {
+    http = mockHttpClient();
+    resource = new ContentTypeResource(http);
+  });
+
+  /**
+   * Wires up the mock so create() can resolve element types, read length rules,
+   * fetch the existing content type list for the uniqueness check, and POST. The
+   * POSTed `name` is echoed back in the response so assertions can read the final
+   * (possibly suffixed) name off the returned content type. Length rules are
+   * returned empty unless a name limit is given, so length validation never interferes with the suffix checks.
+   */
+  function mockCreateWithExisting(existingNames: string[], nameLimit?: number) {
+    const listResponse = existingNames.map((name, i) => ({
+      id: 100 + i,
+      name,
+      alias: name,
+      description: '',
+      type: 10,
+    }));
+    (http.request as ReturnType<typeof vi.fn>).mockImplementation(async (opts: { method: string; path: string; body?: { name?: string } }) => {
+      if (opts.path === '/type/') return ELEMENT_TYPES;
+      if (opts.path === '/htmlEditor') return HTML_EDITORS;
+      if (opts.path === '/validationrule/contenttype' && nameLimit !== undefined) {
+        return { name: [{ msgTemplate: 'maxLength', maxLength: nameLimit }] };
+      }
+      if (opts.path.startsWith('/validationrule/')) return {};
+      if (opts.method === 'GET' && opts.path === '/contenttype?excludeElements=true') return listResponse;
+      if (opts.method === 'POST' && opts.path === '/contenttype') {
+        return {
+          id: 500,
+          name: opts.body?.name,
+          alias: opts.body?.name,
+          description: '',
+          contentTypeElements: [
+            { id: 1, name: 'Name', type: 1, alias: 'Name', sequence: 1 },
+            { id: 2, name: 'Title', type: 1, alias: 'Title', sequence: 2 },
+          ],
+        };
+      }
+      throw new Error(`Unexpected: ${opts.method} ${opts.path}`);
+    });
+  }
+
+  /** Reads the `name` field from the single POST /contenttype call body. */
+  function postedName(): string {
+    const postCall = (http.request as ReturnType<typeof vi.fn>).mock.calls.find(
+      (c: unknown[]) => (c[0] as { method: string; path: string }).method === 'POST'
+        && (c[0] as { path: string }).path === '/contenttype',
+    );
+    return (postCall![0] as { body: { name: string } }).body.name;
+  }
+
+  const CONTENT_TYPE_NAME_LIMIT = 100;
+  const titleElement = [{ name: 'Title', type: 'Plain Text' }];
+
+  function postedCalls() {
+    return (http.request as ReturnType<typeof vi.fn>).mock.calls.filter(
+      (c: unknown[]) => (c[0] as { method: string }).method === 'POST',
+    );
+  }
+
+  it('sends the name unchanged when there is no collision', async () => {
+    mockCreateWithExisting(['Press Release', 'Event']);
+
+    const ct = await resource.create({ name: 'News Article', elements: titleElement }, { wait: false });
+
+    expect(postedName()).toBe('News Article');
+    expect(ct.name).toBe('News Article');
+  });
+
+  it('appends " (1)" on the first exact collision', async () => {
+    mockCreateWithExisting(['News Article']);
+
+    const ct = await resource.create({ name: 'News Article', elements: titleElement }, { wait: false });
+
+    expect(postedName()).toBe('News Article (1)');
+    expect(ct.name).toBe('News Article (1)');
+  });
+
+  it('increments to the next free (n) when earlier suffixes are taken', async () => {
+    mockCreateWithExisting(['News Article', 'News Article (1)', 'News Article (2)']);
+
+    const ct = await resource.create({ name: 'News Article', elements: titleElement }, { wait: false });
+
+    expect(postedName()).toBe('News Article (3)');
+    expect(ct.name).toBe('News Article (3)');
+  });
+
+  it('skips over gaps and picks the first free index', async () => {
+    mockCreateWithExisting(['News Article', 'News Article (2)']);
+
+    const ct = await resource.create({ name: 'News Article', elements: titleElement }, { wait: false });
+
+    expect(postedName()).toBe('News Article (1)');
+    expect(ct.name).toBe('News Article (1)');
+  });
+
+  it('uses the base name unchanged when only a suffixed variant exists', async () => {
+    mockCreateWithExisting(['News Article (1)']);
+
+    const ct = await resource.create({ name: 'News Article', elements: titleElement }, { wait: false });
+
+    expect(postedName()).toBe('News Article');
+    expect(ct.name).toBe('News Article');
+  });
+
+  it('matches collisions case-insensitively', async () => {
+    mockCreateWithExisting(['News Article']);
+
+    const ct = await resource.create({ name: 'news article', elements: titleElement }, { wait: false });
+
+    expect(postedName()).toBe('news article (1)');
+    expect(ct.name).toBe('news article (1)');
+  });
+
+  it('trims the input name before checking for a collision', async () => {
+    mockCreateWithExisting(['News Article']);
+
+    const ct = await resource.create({ name: '  News Article  ', elements: titleElement }, { wait: false });
+
+    expect(postedName()).toBe('News Article (1)');
+    expect(ct.name).toBe('News Article (1)');
+  });
+
+  it('decodes HTML entities in existing names before comparing', async () => {
+    mockCreateWithExisting(['Tom &amp; Jerry']);
+
+    const ct = await resource.create({ name: 'Tom & Jerry', elements: titleElement }, { wait: false });
+
+    expect(postedName()).toBe('Tom & Jerry (1)');
+    expect(ct.name).toBe('Tom & Jerry (1)');
+  });
+
+  it('rejects a suffixed name that exceeds the live length limit', async () => {
+    mockCreateWithExisting(['n'.repeat(CONTENT_TYPE_NAME_LIMIT)], CONTENT_TYPE_NAME_LIMIT);
+    await expect(
+      resource.create({ name: 'n'.repeat(CONTENT_TYPE_NAME_LIMIT), elements: titleElement }, { wait: false }),
+    ).rejects.toThrow('Content type name is too long (104 characters). The maximum is 100.');
+    expect(postedCalls()).toHaveLength(0);
+  });
+
+  it('accepts a name whose suffixed form is exactly at the limit', async () => {
+    const baseName = 'n'.repeat(CONTENT_TYPE_NAME_LIMIT - ' (1)'.length);
+    mockCreateWithExisting([baseName], CONTENT_TYPE_NAME_LIMIT);
+    await resource.create({ name: baseName, elements: titleElement }, { wait: false });
+    expect(postedName()).toBe(`${baseName} (1)`);
   });
 });
