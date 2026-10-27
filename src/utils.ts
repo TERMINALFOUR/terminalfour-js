@@ -306,6 +306,38 @@ export function assertNotEmptyIfPresent(value: string | null | undefined, label:
 }
 
 /**
+ * Makes `name` unique against `existingNames` by appending ` (n)`, mirroring the
+ * T4 UI's content-type naming (issue #52).
+ *
+ * The UI treats content type names as unique: creating one whose name already
+ * exists silently becomes `News Article (1)`, then `News Article (2)`, and so on.
+ * The REST API does not enforce this, so the SDK reproduces it client-side before
+ * the create request.
+ *
+ * Behaviour:
+ * - The candidate name is trimmed first.
+ * - Comparison is case-insensitive, matching the UI (`news article` collides with
+ *   `News Article`).
+ * - If the trimmed name is free, it is returned unchanged — a pre-existing
+ *   suffixed variant (e.g. `News Article (1)`) does not force a suffix onto a free
+ *   base name.
+ * - On a collision, the lowest free index from `1` upwards is used, so gaps are
+ *   filled (`News Article`, `News Article (2)` taken → `News Article (1)`).
+ *
+ * The returned string preserves the original casing and spacing of the trimmed
+ * input; only `existingNames` are compared case-insensitively.
+ */
+export function suffixNameForUniqueness(name: string, existingNames: string[]): string {
+  const base = name.trim();
+  const taken = new Set(existingNames.map((n) => n.trim().toLowerCase()));
+  if (!taken.has(base.toLowerCase())) return base;
+  for (let n = 1; ; n++) {
+    const candidate = `${base} (${n})`;
+    if (!taken.has(candidate.toLowerCase())) return candidate;
+  }
+}
+
+/**
  * A single validation rule as returned by the T4 `GET /validationrule/{entity}`
  * endpoints. Only `maxLength` rules carry a `maxLength` value; other templates
  * (e.g. `notBlank`) omit it.

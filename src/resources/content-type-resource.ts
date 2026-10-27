@@ -1,6 +1,6 @@
 import { HttpClient } from '../http-client.js';
 import { ContentTypeData, ContentTypeFieldDef, WaitOption } from '../types.js';
-import { decodeHtmlEntities, AUTH_LEVEL_MAP, AUTH_LEVEL_REVERSE, debugWarn, DEFAULT_CACHE_TTL, DEFAULT_WRITE_WAIT_TIMEOUT, WRITE_WAIT_POLL_INTERVAL, sleep, getCacheEpoch, invalidateAllCaches, readPrimaryGroup, readSharedGroups, writePrimaryGroup, writeSharedGroups, assertGroupsValid, assertRequired, assertNotEmptyIfPresent, defaultMaxSizeForType, extractMaxLength, assertMaxLength, TtlValue, ValidationRuleSet, RawPrimaryGroup } from '../utils.js';
+import { decodeHtmlEntities, AUTH_LEVEL_MAP, AUTH_LEVEL_REVERSE, debugWarn, DEFAULT_CACHE_TTL, DEFAULT_WRITE_WAIT_TIMEOUT, WRITE_WAIT_POLL_INTERVAL, sleep, getCacheEpoch, invalidateAllCaches, readPrimaryGroup, readSharedGroups, writePrimaryGroup, writeSharedGroups, assertGroupsValid, assertRequired, assertNotEmptyIfPresent, suffixNameForUniqueness, defaultMaxSizeForType, extractMaxLength, assertMaxLength, TtlValue, ValidationRuleSet, RawPrimaryGroup } from '../utils.js';
 
 /** Raw content type element from the API response */
 interface ApiContentTypeElement {
@@ -1447,18 +1447,37 @@ export class ContentTypeResource {
 
     // Validate name/description lengths against the live T4 limits (issue #35)
     // before building the request, so an over-length value fails fast and
-    // clearly instead of triggering a server 500.
+    // clearly instead of triggering a server 500. Validating the raw name here,
+    // before the uniqueness fetch below, means an over-length name fails without
+    // a wasted list request — the ` (n)` suffix only lengthens the name, so a
+    // name that is already too long cannot be rescued by suffixing.
     const [ctRules, elementRules] = await Promise.all([
       this.validationRules.contentType(),
       this.validationRules.templateElement(),
     ]);
-    assertMaxLength(data.name, extractMaxLength(ctRules, 'name'), 'Content type name');
+    const ctNameMax = extractMaxLength(ctRules, 'name');
+    assertMaxLength(data.name, ctNameMax, 'Content type name');
     assertMaxLength(data.description, extractMaxLength(ctRules, 'description'), 'Content type description');
     const elementNameMax = extractMaxLength(elementRules, 'name');
     const elementDescMax = extractMaxLength(elementRules, 'description');
     for (const el of data.elements) {
       assertMaxLength(el.name, elementNameMax, `Element "${el.name}" name`);
       assertMaxLength(el.description, elementDescMax, `Element "${el.name}" description`);
+    }
+
+    // Match the T4 UI: if the name collides with an existing content type,
+    // auto-suffix it with ` (n)` before sending (issue #52). Existing names are
+    // decoded so the comparison is against friendly names, as the UI shows them.
+    // The suffixed name is length-validated again, since the suffix can push a
+    // name that was within the limit over it.
+    const existing = await this.httpClient.request<ApiContentType[]>({
+      method: 'GET',
+      path: '/contenttype?excludeElements=true',
+    });
+    const existingNames = existing.map((ct) => decodeHtmlEntities(ct.alias || ct.name));
+    const uniqueName = suffixNameForUniqueness(data.name, existingNames);
+    if (uniqueName !== data.name.trim()) {
+      assertMaxLength(uniqueName, ctNameMax, 'Content type name');
     }
 
     const typeMap = await this.getTypeMap();
@@ -1575,7 +1594,7 @@ export class ContentTypeResource {
       method: 'POST',
       path: '/contenttype',
       body: {
-        name: data.name,
+        name: uniqueName,
         description: data.description ?? '',
         type: 10,
         editable: true,
