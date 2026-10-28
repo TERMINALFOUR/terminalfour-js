@@ -1188,6 +1188,9 @@ export class ContentTypeResource {
   private editorMapPromise: Promise<Map<number, string>> | null = null;
   private editorMapExpiresAt = 0;
   private editorMapEpoch = -1;
+  private existingNamesPromise: Promise<string[]> | null = null;
+  private existingNamesExpiresAt = 0;
+  private existingNamesEpoch = -1;
 
   constructor(httpClient: HttpClient) {
     this.httpClient = httpClient;
@@ -1221,6 +1224,40 @@ export class ContentTypeResource {
       );
     }
     return this.editorMapPromise;
+  }
+
+  /**
+   * Fetches and caches the decoded names of all existing content types, used by
+   * `create()` to auto-suffix a colliding name (issue #52).
+   *
+   * Caching matters because `GET /contenttype?excludeElements=true` returns every
+   * content type on the instance, so an uncached fetch on every `create()` could
+   * be heavy. It is safe because the cache is gated on the global cache epoch
+   * (the same TTL + epoch idiom as `getTypeMap`/`getEditorMap`): a successful
+   * `create()` calls `invalidateAllCaches()`, bumping the epoch, so the very next
+   * create refetches and sees the name just created — two creates in a row can't
+   * race into a stale suffix.
+   *
+   * Unlike `getEditorMap`, a fetch failure is **not** swallowed: if existing
+   * names can't be read, uniqueness can't be guaranteed, so the rejection
+   * propagates (per DECISIONS #123). The in-flight promise is cleared on
+   * rejection so a transient failure doesn't poison the cache for the TTL window.
+   */
+  private getExistingNames(): Promise<string[]> {
+    if (!this.existingNamesPromise || Date.now() > this.existingNamesExpiresAt || this.existingNamesEpoch < getCacheEpoch()) {
+      this.existingNamesExpiresAt = Date.now() + DEFAULT_CACHE_TTL;
+      this.existingNamesEpoch = getCacheEpoch();
+      this.existingNamesPromise = this.httpClient.request<ApiContentType[]>({
+        method: 'GET',
+        path: '/contenttype?excludeElements=true',
+      })
+        .then((types) => types.map((ct) => decodeHtmlEntities(ct.alias || ct.name)))
+        .catch((error) => {
+          this.existingNamesPromise = null;
+          throw error;
+        });
+    }
+    return this.existingNamesPromise;
   }
 
   /** Resolves listName for all fields that have a non-zero listId. */
@@ -1416,9 +1453,11 @@ export class ContentTypeResource {
    *
    * Matches the T4 UI: a name that collides with an existing content type is
    * auto-suffixed with ` (n)` before sending. Existing names are decoded so the
-   * comparison is against friendly names, as the UI shows them. The raw name is
-   * length-validated first, so an over-length name fails without a list request
-   * (suffixing only lengthens a name). The suffixed name is validated again via
+   * comparison is against friendly names, as the UI shows them, and come from
+   * the cached `getExistingNames()` so create does not issue a heavy list request
+   * every time. The raw name is length-validated first, so an over-length name
+   * fails before any list request (suffixing only lengthens a name). The
+   * suffixed name is validated again via
    * `ValidationRules.assertContentTypeName`. The existing-names fetch is not
    * error-swallowed: if names cannot be read, uniqueness cannot be guaranteed.
    */
@@ -1474,11 +1513,7 @@ export class ContentTypeResource {
 
     await this.validationRules.assertContentType(data, data.elements);
 
-    const existing = await this.httpClient.request<ApiContentType[]>({
-      method: 'GET',
-      path: '/contenttype?excludeElements=true',
-    });
-    const existingNames = existing.map((ct) => decodeHtmlEntities(ct.alias || ct.name));
+    const existingNames = await this.getExistingNames();
     const uniqueName = suffixNameForUniqueness(data.name, existingNames);
     if (uniqueName !== data.name.trim()) {
       await this.validationRules.assertContentTypeName(uniqueName);
