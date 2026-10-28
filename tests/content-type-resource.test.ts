@@ -2730,4 +2730,55 @@ describe('ContentTypeResource.create() name auto-suffix (#52)', () => {
     expect(postedName()).toBe('Tom & Jerry (1)');
     expect(ct.name).toBe('Tom & Jerry (1)');
   });
+
+  /**
+   * Counts how often the heavy `GET /contenttype?excludeElements=true` list is
+   * fetched. `listCalls` increments per fetch so the caching assertions can read
+   * it. Length-rule endpoints return empty so length validation never interferes.
+   */
+  function mockWithListCounter() {
+    const counter = { listCalls: 0 };
+    (http.request as ReturnType<typeof vi.fn>).mockImplementation(async (opts: { method: string; path: string; body?: { name?: string } }) => {
+      if (opts.path === '/type/') return ELEMENT_TYPES;
+      if (opts.path === '/htmlEditor') return HTML_EDITORS;
+      if (opts.path.startsWith('/validationrule/')) return {};
+      if (opts.method === 'GET' && opts.path === '/contenttype?excludeElements=true') {
+        counter.listCalls++;
+        return [{ id: 101, name: 'Existing', alias: 'Existing', type: 10 }];
+      }
+      if (opts.method === 'POST' && opts.path === '/contenttype') {
+        return { id: 500, name: opts.body?.name, alias: opts.body?.name, description: '', contentTypeElements: [] };
+      }
+      throw new Error(`Unexpected: ${opts.method} ${opts.path}`);
+    });
+    return counter;
+  }
+
+  it('caches the existing-names list across creates that do not invalidate', async () => {
+    // Two creates that reach the uniqueness fetch but throw in the type loop
+    // (unknown element type) before the POST — so invalidateAllCaches() never
+    // runs between them and the cached list is reused.
+    const counter = mockWithListCounter();
+
+    await expect(
+      resource.create({ name: 'A', elements: [{ name: 'X', type: 'FakeType' }] }, { wait: false }),
+    ).rejects.toThrow('Unknown element type');
+    await expect(
+      resource.create({ name: 'B', elements: [{ name: 'X', type: 'FakeType' }] }, { wait: false }),
+    ).rejects.toThrow('Unknown element type');
+
+    expect(counter.listCalls).toBe(1);
+  });
+
+  it('refetches the existing-names list after a successful create invalidates caches', async () => {
+    // Each successful create ends with invalidateAllCaches(), bumping the global
+    // epoch, so the next create must refetch and see the name just created —
+    // no stale-suffix race between back-to-back creates.
+    const counter = mockWithListCounter();
+
+    await resource.create({ name: 'A', elements: titleElement }, { wait: false });
+    await resource.create({ name: 'B', elements: titleElement }, { wait: false });
+
+    expect(counter.listCalls).toBe(2);
+  });
 });
