@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { PageLayoutResource } from '../src/resources/page-layout-resource.js';
 import { HttpClient } from '../src/http-client.js';
+import { invalidateAllCaches } from '../src/utils.js';
 
 function mockHttpClient() {
   return { request: vi.fn() } as unknown as HttpClient;
@@ -337,6 +338,318 @@ describe('PageLayoutResource', () => {
       layout.name = '   ';
       await expect(layout.save()).rejects.toThrow('Page layout name is required');
       expect(calls.find((c) => c.method === 'PUT')).toBeUndefined();
+    });
+  });
+});
+
+/**
+ * Instance-resolved processor, syntax and file extension (issues #56, #57).
+ * IDs deliberately avoid the old hardcoded defaults (syntax 3, processor 15)
+ * so a passing test proves the value came from the instance lookup.
+ */
+describe('PageLayoutResource instance lookups (#56, #57)', () => {
+  type Call = { method: string; path: string; body?: Record<string, unknown> };
+
+  interface RouteOptions {
+    syntaxTypes?: Array<{ id: number; name: string }>;
+    processors?: Array<{ id: number; name: string }>;
+    extensions?: Array<{ extension: string }> | Error;
+    layout?: Record<string, unknown>;
+  }
+
+  const DEFAULT_SYNTAX = [{ id: 7, name: 'HTML/XML' }, { id: 8, name: 'Javascript' }];
+  const DEFAULT_PROCESSORS = [
+    { id: 21, name: 'T4 Tag Page' },
+    { id: 42, name: 'Handlebars Page' },
+    { id: 63, name: 'Programmable Layout Page' },
+  ];
+  const DEFAULT_LAYOUT = {
+    id: 5, name: 'Homepage', description: '', headerCode: '', footerCode: '',
+    stylesheetCode: '', fileExtension: '', syntaxType: 7, layoutProcessor: 21,
+  };
+
+  let http: HttpClient;
+  let resource: PageLayoutResource;
+  let calls: Call[];
+
+  function route(opts: RouteOptions = {}) {
+    const extensions = opts.extensions ?? [{ extension: 'html' }, { extension: 'PHP' }];
+    (http.request as ReturnType<typeof vi.fn>).mockImplementation(async (req: Call) => {
+      calls.push(req);
+      if (req.path === '/syntaxType') return opts.syntaxTypes ?? DEFAULT_SYNTAX;
+      if (req.path === '/publishProcessor/10') return opts.processors ?? DEFAULT_PROCESSORS;
+      if (req.path === '/fileExtension') {
+        if (extensions instanceof Error) throw extensions;
+        return extensions;
+      }
+      if (req.method === 'POST' && req.path === '/pageLayout') {
+        return { id: 900, ...req.body, syntaxType: Number(req.body?.syntaxType), layoutProcessor: Number(req.body?.layoutProcessor) };
+      }
+      if (req.method === 'PUT' && req.path === '/pageLayout/5') return undefined;
+      if (req.path === '/pageLayout/5') return { ...DEFAULT_LAYOUT, ...opts.layout };
+      throw new Error(`Unexpected: ${req.method} ${req.path}`);
+    });
+  }
+
+  const find = (method: string, path?: string) =>
+    calls.find((c) => c.method === method && (path === undefined || c.path === path));
+  const countPath = (path: string) => calls.filter((c) => c.path === path).length;
+
+  beforeEach(() => {
+    http = { request: vi.fn() } as unknown as HttpClient;
+    resource = new PageLayoutResource(http);
+    calls = [];
+  });
+
+  describe('create() processor', () => {
+    it('should default to the instance Handlebars processor ID when none is passed', async () => {
+      route();
+      const layout = await resource.create({ name: 'L' });
+      expect(find('POST')!.body!.layoutProcessor).toBe('42');
+      expect(layout.processor).toBe('handlebars');
+    });
+
+    it('should throw and not POST when Handlebars is not on the instance', async () => {
+      route({ processors: [{ id: 21, name: 'T4 Tag Page' }] });
+      await expect(resource.create({ name: 'L' })).rejects.toThrow(
+        'Processor "Handlebars Page" not found on this T4 instance. Available processors: T4 Tag Page',
+      );
+      expect(find('POST')).toBeUndefined();
+    });
+
+    it('should throw and not POST when an explicit processor is not on the instance', async () => {
+      route({ processors: [{ id: 42, name: 'Handlebars Page' }] });
+      await expect(resource.create({ name: 'L', processor: 'programmable-layouts' })).rejects.toThrow(
+        'Processor "Programmable Layout Page" not found on this T4 instance',
+      );
+      expect(find('POST')).toBeUndefined();
+    });
+
+    it('should throw on an unknown processor key', async () => {
+      route();
+      await expect(
+        // @ts-expect-error — only the three friendly keys are accepted
+        resource.create({ name: 'L', processor: 'not-a-processor' }),
+      ).rejects.toThrow('Unknown processor "not-a-processor". Valid options: t4-tags, handlebars, programmable-layouts');
+      expect(find('POST')).toBeUndefined();
+    });
+
+    it('should resolve a matched explicit processor', async () => {
+      route();
+      await resource.create({ name: 'L', processor: 'programmable-layouts' });
+      expect(find('POST')!.body!.layoutProcessor).toBe('63');
+    });
+  });
+
+  describe('create() syntax', () => {
+    it('should default to the instance HTML/XML syntax ID when none is passed', async () => {
+      route();
+      const layout = await resource.create({ name: 'L' });
+      expect(find('POST')!.body!.syntaxType).toBe('7');
+      expect(layout.syntax).toBe('HTML/XML');
+    });
+
+    it('should throw and not POST when HTML/XML is not on the instance', async () => {
+      route({ syntaxTypes: [{ id: 8, name: 'Javascript' }] });
+      await expect(resource.create({ name: 'L' })).rejects.toThrow(
+        'Unknown syntax "HTML/XML". Valid options: Javascript',
+      );
+      expect(find('POST')).toBeUndefined();
+    });
+
+    it('should throw on an unmatched explicit syntax', async () => {
+      route();
+      await expect(resource.create({ name: 'L', syntax: 'Cobol' })).rejects.toThrow(
+        'Unknown syntax "Cobol". Valid options: HTML/XML, Javascript',
+      );
+      expect(find('POST')).toBeUndefined();
+    });
+
+    it('should resolve a matched explicit syntax case-insensitively', async () => {
+      route();
+      await resource.create({ name: 'L', syntax: 'javascript' });
+      expect(find('POST')!.body!.syntaxType).toBe('8');
+    });
+  });
+
+  describe('create() fileExtension', () => {
+    it('should create with no extension and make no lookup when omitted', async () => {
+      route();
+      await resource.create({ name: 'L' });
+      expect(find('POST')!.body!.fileExtension).toBe('');
+      expect(countPath('/fileExtension')).toBe(0);
+    });
+
+    it('should resolve a valid extension to the instance casing', async () => {
+      route();
+      await resource.create({ name: 'L', fileExtension: 'php' });
+      expect(find('POST')!.body!.fileExtension).toBe('PHP');
+    });
+
+    it('should still throw Unknown extension for an invalid extension', async () => {
+      route();
+      await expect(resource.create({ name: 'L', fileExtension: 'xyz' })).rejects.toThrow(
+        'Unknown extension "xyz". Valid options: html, PHP',
+      );
+      expect(find('POST')).toBeUndefined();
+    });
+
+    it('should surface a lookup failure with cause and not create the layout', async () => {
+      const failure = new Error('Service Unavailable');
+      route({ extensions: failure });
+      const err = await resource.create({ name: 'L', fileExtension: 'html' }).catch((e: Error) => e);
+      expect(err).toBeInstanceOf(Error);
+      expect((err as Error).message).toBe('Could not validate file extension "html": Service Unavailable');
+      expect((err as Error).cause).toBe(failure);
+      expect(find('POST')).toBeUndefined();
+    });
+  });
+
+  describe('save() / update()', () => {
+    it('should send the original raw IDs when syntax and processor are unchanged, even if unmapped', async () => {
+      route({ layout: { layoutProcessor: 99, syntaxType: 77 } });
+      const layout = await resource.get(5);
+      expect(layout.processor).toBe('unknown (99)');
+      layout.name = 'Renamed';
+      await layout.save();
+      const body = find('PUT')!.body!;
+      expect(body.layoutProcessor).toBe('99');
+      expect(body.syntaxType).toBe('77');
+    });
+
+    it('should throw and not PUT when a changed processor key is unknown', async () => {
+      route();
+      const layout = await resource.get(5);
+      layout.processor = 'not-a-processor';
+      await expect(layout.save()).rejects.toThrow('Unknown processor "not-a-processor"');
+      expect(find('PUT')).toBeUndefined();
+    });
+
+    it('should reject raw API processor names on save', async () => {
+      route();
+      const layout = await resource.get(5);
+      layout.processor = 'Handlebars Page';
+      await expect(layout.save()).rejects.toThrow('Unknown processor "Handlebars Page"');
+      expect(find('PUT')).toBeUndefined();
+    });
+
+    it('should throw and not PUT when a changed processor is not on the instance', async () => {
+      route({ processors: [{ id: 21, name: 'T4 Tag Page' }] });
+      await expect(resource.update(5, { processor: 'handlebars' })).rejects.toThrow(
+        'Processor "Handlebars Page" not found on this T4 instance',
+      );
+      expect(find('PUT')).toBeUndefined();
+    });
+
+    it('should throw and not PUT when a changed syntax is unmatched', async () => {
+      route();
+      await expect(resource.update(5, { syntax: 'Cobol' })).rejects.toThrow('Unknown syntax "Cobol"');
+      expect(find('PUT')).toBeUndefined();
+    });
+
+    it('should resolve matched changed syntax and processor', async () => {
+      route();
+      await resource.update(5, { syntax: 'Javascript', processor: 'handlebars' });
+      const body = find('PUT')!.body!;
+      expect(body.syntaxType).toBe('8');
+      expect(body.layoutProcessor).toBe('42');
+    });
+
+    it('should only accept the friendly processor keys on update() (type-level)', async () => {
+      route();
+      // @ts-expect-error — update() processor is narrowed to the friendly keys
+      await expect(resource.update(5, { processor: 'Handlebars Page' })).rejects.toThrow('Unknown processor');
+    });
+
+    it('should make no extension lookup when fileExtension is unchanged', async () => {
+      route({ layout: { fileExtension: 'html' } });
+      await resource.update(5, { name: 'Renamed' });
+      expect(find('PUT')!.body!.fileExtension).toBe('html');
+      expect(countPath('/fileExtension')).toBe(0);
+    });
+
+    it('should make no lookup when fileExtension is cleared to None', async () => {
+      route({ layout: { fileExtension: 'html' } });
+      await resource.update(5, { fileExtension: '' });
+      expect(find('PUT')!.body!.fileExtension).toBe('');
+      expect(countPath('/fileExtension')).toBe(0);
+    });
+
+    it('should validate a changed fileExtension and use the instance casing', async () => {
+      route();
+      const layout = await resource.update(5, { fileExtension: 'php' });
+      expect(find('PUT')!.body!.fileExtension).toBe('PHP');
+      expect(layout.fileExtension).toBe('PHP');
+    });
+
+    it('should throw Unknown extension and not PUT for an invalid changed extension', async () => {
+      route();
+      await expect(resource.update(5, { fileExtension: 'xyz' })).rejects.toThrow('Unknown extension "xyz"');
+      expect(find('PUT')).toBeUndefined();
+    });
+
+    it('should surface an extension lookup failure on save and not PUT', async () => {
+      const failure = new Error('boom');
+      route({ extensions: failure });
+      const layout = await resource.get(5);
+      layout.fileExtension = 'html';
+      const err = await layout.save().catch((e: Error) => e);
+      expect((err as Error).message).toBe('Could not validate file extension "html": boom');
+      expect((err as Error).cause).toBe(failure);
+      expect(find('PUT')).toBeUndefined();
+    });
+
+    it('should treat saved values as the new baseline', async () => {
+      route();
+      const layout = await resource.get(5);
+      layout.processor = 'handlebars';
+      layout.fileExtension = 'html';
+      await layout.save();
+      calls.length = 0;
+      (http.request as ReturnType<typeof vi.fn>).mockClear();
+      route({ processors: [], extensions: new Error('should not be called') });
+      layout.name = 'Again';
+      await layout.save();
+      const body = find('PUT')!.body!;
+      expect(body.layoutProcessor).toBe('42');
+      expect(body.fileExtension).toBe('html');
+      expect(countPath('/fileExtension')).toBe(0);
+    });
+  });
+
+  describe('lookup caching', () => {
+    it('should fetch /fileExtension once across multiple writes', async () => {
+      route();
+      await resource.create({ name: 'A', fileExtension: 'html' });
+      await resource.create({ name: 'B', fileExtension: 'php' });
+      await resource.update(5, { fileExtension: 'html' });
+      expect(countPath('/fileExtension')).toBe(1);
+    });
+
+    it('should refetch /fileExtension after the cache epoch is bumped', async () => {
+      route();
+      await resource.create({ name: 'A', fileExtension: 'html' });
+      invalidateAllCaches();
+      await resource.create({ name: 'B', fileExtension: 'html' });
+      expect(countPath('/fileExtension')).toBe(2);
+    });
+
+    it('should not cache a failed /fileExtension lookup', async () => {
+      route({ extensions: new Error('transient') });
+      await expect(resource.create({ name: 'A', fileExtension: 'html' })).rejects.toThrow('Could not validate');
+      route();
+      await resource.create({ name: 'B', fileExtension: 'html' });
+      expect(countPath('/fileExtension')).toBe(2);
+      expect(find('POST')!.body!.fileExtension).toBe('html');
+    });
+
+    it('should not cache failed syntax or processor lookups', async () => {
+      (http.request as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('down'));
+      await expect(resource.create({ name: 'A' })).rejects.toThrow('down');
+      route();
+      await resource.create({ name: 'B' });
+      expect(countPath('/syntaxType')).toBe(1);
+      expect(countPath('/publishProcessor/10')).toBe(1);
     });
   });
 });

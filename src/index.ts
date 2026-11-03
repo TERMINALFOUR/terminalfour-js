@@ -23,7 +23,7 @@ export { Group } from './resources/group-resource.js';
 export type { UserData } from './resources/user-resource.js';
 export type { AuthMethods, AuthMethodValue } from './resources/user-resource.js';
 export { User } from './resources/user-resource.js';
-export type { PageLayoutSummary } from './resources/page-layout-resource.js';
+export type { PageLayoutSummary, PageLayoutProcessor } from './resources/page-layout-resource.js';
 export { PageLayout } from './resources/page-layout-resource.js';
 export type { MediaTypeLayout, MediaTypeData } from './resources/media-type-resource.js';
 export { MediaType, MediaTypeResource } from './resources/media-type-resource.js';
