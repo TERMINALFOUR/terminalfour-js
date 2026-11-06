@@ -42,8 +42,6 @@ describe('SectionRef', () => {
     ref = new SectionRef(http, 233, 'en');
     // Clear the static meta tag cache between tests
     (SectionRef as unknown as { metaTagCache: unknown }).metaTagCache = null;
-    // Bump the global cache epoch so the per-client section validation-rules
-    // cache (issue #49) can't leak a mocked rule set across tests.
     invalidateAllCaches();
   });
 
@@ -715,7 +713,6 @@ describe('SectionRef', () => {
 
     function setupAddSectionMocks() {
       (http.request as ReturnType<typeof vi.fn>).mockImplementation(async (opts: { method: string; path: string; body?: unknown }) => {
-        // Section length-validation rules (issue #49)
         if (opts.path === '/validationrule/section') return SECTION_VALIDATION_RULES;
         // Fetch parent section details
         if (opts.method === 'GET' && opts.path === '/hierarchy/233/en') return parentSection;
