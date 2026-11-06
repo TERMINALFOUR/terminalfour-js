@@ -19,9 +19,9 @@ A full page layout includes:
 | `description` | Layout description |
 | `headerCode` | Header markup or code |
 | `footerCode` | Footer markup or code |
-| `fileExtension` | Output file extension |
+| `fileExtension` | Output file extension, or `''` for None |
 | `syntax` | Syntax such as `'HTML/XML'` |
-| `processor` | Processor such as `'handlebars'` |
+| `processor` | Processor such as `'handlebars'`. A processor outside the three supported keys reads back as its Terminalfour name (or `unknown (id)`). |
 | `primaryGroup` | Owning group ID. `0` means no primary group (Global). |
 | `sharedGroups` | Array of group IDs the layout is shared with |
 
@@ -33,15 +33,38 @@ await t4.pageLayouts.create({
   description: 'A custom page layout',
   headerCode: '<!DOCTYPE html><html><head></head><body>',
   footerCode: '</body></html>',
-  syntax: 'HTML/XML',      // optional
+  syntax: 'HTML/XML',      // optional; default: 'HTML/XML'
   processor: 'handlebars', // optional; default: 'handlebars'
-  fileExtension: 'html',   // optional
+  fileExtension: 'html',   // optional; default: None
   primaryGroup: 35,        // optional; owning group ID
   sharedGroups: [34, 40],  // optional; group IDs to share with
 });
 ```
 
-Processor options are `'handlebars'`, `'t4-tags'`, and `'programmable-layouts'`. The default is `'handlebars'`.
+## Processor, syntax, and file extension
+
+These values are instance-specific, so the SDK always resolves them against what your Terminalfour instance actually has. Nothing is hardcoded, and nothing is silently substituted.
+
+| Field | Accepted values | Default on `create()` | When it can't be resolved |
+|---|---|---|---|
+| `processor` | `'handlebars'`, `'t4-tags'`, `'programmable-layouts'` | `'handlebars'` | Throws `Unknown processor "x". Valid options: ...` for any other key, or `Processor "Handlebars Page" not found on this T4 instance. Available processors: ...` if the instance doesn't have it |
+| `syntax` | Any syntax name on the instance (case-insensitive) | `'HTML/XML'` | Throws `Unknown syntax "x". Valid options: ...` |
+| `fileExtension` | Any extension on the instance (case-insensitive; the instance's casing is used) | None (`''`), with no lookup | Throws `Unknown extension "x". Valid options: ...` |
+
+If the list of valid file extensions can't be fetched, the SDK throws `Could not validate file extension "html": <reason>` rather than creating or saving the layout without the extension you asked for. The original error is available as `error.cause`:
+
+```typescript
+try {
+  await t4.pageLayouts.create({ name: 'My Layout', fileExtension: 'html' });
+} catch (error) {
+  console.error(error.message); // Could not validate file extension "html": ...
+  console.error(error.cause);   // the underlying T4ApiError
+}
+```
+
+The same rules apply on `save()` and `update()`, but only to values you change. A field you don't touch is sent back exactly as it was read, so you can still rename a layout that uses a processor outside the three supported keys. Setting `fileExtension` to `''` clears it (None) without a lookup.
+
+The lists of processors, syntaxes, and file extensions are cached for five minutes. `t4.clearCache()` clears them. A failed lookup is never cached, so the next call tries again.
 
 ## Group and visibility
 

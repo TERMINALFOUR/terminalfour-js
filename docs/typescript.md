@@ -96,6 +96,7 @@ import type {
 
   // Page layouts
   PageLayoutSummary,
+  PageLayoutProcessor, // 't4-tags' | 'handlebars' | 'programmable-layouts'
 
   // Handlebars
   HandlebarsItemSummary,
