@@ -69,17 +69,15 @@ export class SectionItem {
     Object.defineProperty(this, '_rawData', { value: raw, enumerable: false, writable: true });
   }
 
-  /** Persists current property values to the server via PUT. */
+  /**
+   * Persists current property values to the server via PUT.
+   * Rejects mirrored sections and over-length name, filename, or outputUri
+   * values (issue #49) before any write. The mirror guard runs first and uses
+   * the in-memory DTO, so a mirrored section is rejected with no network call.
+   */
   async save(): Promise<void> {
     assertRequired(this.name, 'Section name');
-    // A mirrored section is read-only; block saves (uses the in-memory DTO, no
-    // fetch). Runs before length validation so a mirrored section is rejected
-    // without any network call.
     assertSectionNotMirrored(this._httpClient, this.id, this._rawData);
-    // Validate the length of every settable, length-limited field against the
-    // T4 limits before writing, so an over-length value can't leave the section
-    // in a broken state (issue #49). name, filename, and outputUri are the
-    // settable length-limited properties (SEO keyphrases aren't settable here).
     await validateSectionFieldLengths(this._httpClient, {
       name: this.name,
       filename: this.filename,

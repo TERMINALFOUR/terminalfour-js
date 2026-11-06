@@ -19,10 +19,6 @@ function findPut(http: HttpClient): { method: string; path: string; body: Record
   return put;
 }
 
-// The section validation-rules cache is keyed by HttpClient instance and
-// respects the global cache epoch. Bump the epoch before each test so a mocked
-// rule set from one test never leaks into the next (each test uses a fresh
-// mock HttpClient, but belt-and-braces).
 beforeEach(() => {
   invalidateAllCaches();
 });
@@ -500,11 +496,9 @@ describe('SectionItem — length validation (#49)', () => {
     const http = mockHttpClient();
     withRules(http);
     const item = new SectionItem(rawSection, http, 'en');
-    // 25 emoji = 50 UTF-16 code units — at the limit, allowed.
     item.name = '\u{1F600}'.repeat(25);
     await expect(item.save()).resolves.toBeUndefined();
 
-    // 26 emoji = 52 units — over the limit.
     item.name = '\u{1F600}'.repeat(26);
     await expect(item.save()).rejects.toThrow(
       'Section name is too long (52 characters). The maximum is 50.',

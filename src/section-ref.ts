@@ -944,9 +944,6 @@ export class SectionRef {
    */
   async addSection(data: Omit<AddSectionData, 'parentId'>, options?: LanguageOption): Promise<SectionItem> {
     assertRequired(data.name, 'Section name');
-    // Validate name length before any request so an over-length name can't
-    // create a section in a broken state (issue #49). Only name is settable
-    // through addSection — filename/output-uri/seo go out empty.
     await validateSectionFieldLengths(this.httpClient, { name: data.name });
     const language = resolveLanguage(options?.language, this.defaultLanguage);
 
@@ -1297,8 +1294,6 @@ export class SectionRef {
     // guard the name here. Present-only: omitting name is valid, but setting it
     // blank is not.
     assertNotEmptyIfPresent(data.name, 'Section name');
-    // Validate name length up front (issue #49). name is the only
-    // length-limited field this path changes; when omitted, nothing to check.
     if (data.name !== undefined) {
       await validateSectionFieldLengths(this.httpClient, { name: data.name });
     }
