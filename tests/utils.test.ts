@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach, beforeAll } from 'vitest';
-import { resolveLanguage, toTimestamp, decodeHtmlEntities, debugWarn, invalidateAllCaches, parseFileSize, normaliseBaseUrl, assertNotBrowser, readPrimaryGroup, readSharedGroups, writePrimaryGroup, writeSharedGroups, assertGroupsValid, assertRequired, assertNotEmptyIfPresent, parseDuplicatedSectionId, defaultMaxSizeForType, DEFAULT_MAX_SIZE, extractMaxLength, assertMaxLength, ValidationRuleSet } from '../src/utils.js';
+import { resolveLanguage, toTimestamp, decodeHtmlEntities, debugWarn, invalidateAllCaches, parseFileSize, normaliseBaseUrl, assertNotBrowser, readPrimaryGroup, readSharedGroups, writePrimaryGroup, writeSharedGroups, assertGroupsValid, assertRequired, assertNotEmptyIfPresent, suffixNameForUniqueness, parseDuplicatedSectionId, defaultMaxSizeForType, DEFAULT_MAX_SIZE, extractMaxLength, assertMaxLength, ValidationRuleSet } from '../src/utils.js';
 
 describe('resolveLanguage', () => {
   it('returns override when provided', () => {
@@ -644,5 +644,41 @@ describe('assertMaxLength', () => {
     expect(() => assertMaxLength('', 5, 'X')).not.toThrow();
     expect(() => assertMaxLength(null, 5, 'X')).not.toThrow();
     expect(() => assertMaxLength(undefined, 5, 'X')).not.toThrow();
+  });
+});
+
+describe('suffixNameForUniqueness', () => {
+  it('returns the trimmed name unchanged when there is no collision', () => {
+    expect(suffixNameForUniqueness('News Article', ['Press Release'])).toBe('News Article');
+  });
+
+  it('trims the input name', () => {
+    expect(suffixNameForUniqueness('  News Article  ', [])).toBe('News Article');
+  });
+
+  it('appends " (1)" on the first exact collision', () => {
+    expect(suffixNameForUniqueness('News Article', ['News Article'])).toBe('News Article (1)');
+  });
+
+  it('increments to the next free index', () => {
+    expect(
+      suffixNameForUniqueness('News Article', ['News Article', 'News Article (1)', 'News Article (2)']),
+    ).toBe('News Article (3)');
+  });
+
+  it('fills the lowest free gap', () => {
+    expect(suffixNameForUniqueness('News Article', ['News Article', 'News Article (2)'])).toBe('News Article (1)');
+  });
+
+  it('does not suffix a free base name when only a variant exists', () => {
+    expect(suffixNameForUniqueness('News Article', ['News Article (1)'])).toBe('News Article');
+  });
+
+  it('compares case-insensitively but preserves input casing', () => {
+    expect(suffixNameForUniqueness('news article', ['News Article'])).toBe('news article (1)');
+  });
+
+  it('trims existing names before comparing', () => {
+    expect(suffixNameForUniqueness('News Article', ['  News Article  '])).toBe('News Article (1)');
   });
 });

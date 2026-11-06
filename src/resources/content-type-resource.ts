@@ -1,6 +1,6 @@
 import { HttpClient } from '../http-client.js';
 import { ContentTypeData, ContentTypeFieldDef, WaitOption } from '../types.js';
-import { decodeHtmlEntities, AUTH_LEVEL_MAP, AUTH_LEVEL_REVERSE, debugWarn, DEFAULT_CACHE_TTL, DEFAULT_WRITE_WAIT_TIMEOUT, WRITE_WAIT_POLL_INTERVAL, sleep, getCacheEpoch, invalidateAllCaches, readPrimaryGroup, readSharedGroups, writePrimaryGroup, writeSharedGroups, assertGroupsValid, assertRequired, assertNotEmptyIfPresent, defaultMaxSizeForType, extractMaxLength, assertMaxLength, TtlValue, ValidationRuleSet, RawPrimaryGroup } from '../utils.js';
+import { decodeHtmlEntities, AUTH_LEVEL_MAP, AUTH_LEVEL_REVERSE, debugWarn, DEFAULT_CACHE_TTL, DEFAULT_WRITE_WAIT_TIMEOUT, WRITE_WAIT_POLL_INTERVAL, sleep, getCacheEpoch, invalidateAllCaches, readPrimaryGroup, readSharedGroups, writePrimaryGroup, writeSharedGroups, assertGroupsValid, assertRequired, assertNotEmptyIfPresent, suffixNameForUniqueness, defaultMaxSizeForType, extractMaxLength, assertMaxLength, TtlValue, ValidationRuleSet, RawPrimaryGroup } from '../utils.js';
 
 /** Raw content type element from the API response */
 interface ApiContentTypeElement {
@@ -1171,6 +1171,9 @@ export class ContentTypeResource {
   private editorMapPromise: Promise<Map<number, string>> | null = null;
   private editorMapExpiresAt = 0;
   private editorMapEpoch = -1;
+  private existingNamesPromise: Promise<string[]> | null = null;
+  private existingNamesExpiresAt = 0;
+  private existingNamesEpoch = -1;
 
   constructor(httpClient: HttpClient) {
     this.httpClient = httpClient;
@@ -1204,6 +1207,40 @@ export class ContentTypeResource {
       );
     }
     return this.editorMapPromise;
+  }
+
+  /**
+   * Fetches and caches the decoded names of all existing content types, used by
+   * `create()` to auto-suffix a colliding name (issue #52).
+   *
+   * Caching matters because `GET /contenttype?excludeElements=true` returns every
+   * content type on the instance, so an uncached fetch on every `create()` could
+   * be heavy. It is safe because the cache is gated on the global cache epoch
+   * (the same TTL + epoch idiom as `getTypeMap`/`getEditorMap`): a successful
+   * `create()` calls `invalidateAllCaches()`, bumping the epoch, so the very next
+   * create refetches and sees the name just created — two creates in a row can't
+   * race into a stale suffix.
+   *
+   * Unlike `getEditorMap`, a fetch failure is **not** swallowed: if existing
+   * names can't be read, uniqueness can't be guaranteed, so the rejection
+   * propagates (per DECISIONS #123). The in-flight promise is cleared on
+   * rejection so a transient failure doesn't poison the cache for the TTL window.
+   */
+  private getExistingNames(): Promise<string[]> {
+    if (!this.existingNamesPromise || Date.now() > this.existingNamesExpiresAt || this.existingNamesEpoch < getCacheEpoch()) {
+      this.existingNamesExpiresAt = Date.now() + DEFAULT_CACHE_TTL;
+      this.existingNamesEpoch = getCacheEpoch();
+      this.existingNamesPromise = this.httpClient.request<ApiContentType[]>({
+        method: 'GET',
+        path: '/contenttype?excludeElements=true',
+      })
+        .then((types) => types.map((ct) => decodeHtmlEntities(ct.alias || ct.name)))
+        .catch((error) => {
+          this.existingNamesPromise = null;
+          throw error;
+        });
+    }
+    return this.existingNamesPromise;
   }
 
   /** Resolves listName for all fields that have a non-zero listId. */
@@ -1447,18 +1484,34 @@ export class ContentTypeResource {
 
     // Validate name/description lengths against the live T4 limits (issue #35)
     // before building the request, so an over-length value fails fast and
-    // clearly instead of triggering a server 500.
+    // clearly instead of triggering a server 500. Validating the raw name here,
+    // before the uniqueness fetch below, means an over-length name fails without
+    // a wasted list request — the ` (n)` suffix only lengthens the name, so a
+    // name that is already too long cannot be rescued by suffixing.
     const [ctRules, elementRules] = await Promise.all([
       this.validationRules.contentType(),
       this.validationRules.templateElement(),
     ]);
-    assertMaxLength(data.name, extractMaxLength(ctRules, 'name'), 'Content type name');
+    const ctNameMax = extractMaxLength(ctRules, 'name');
+    assertMaxLength(data.name, ctNameMax, 'Content type name');
     assertMaxLength(data.description, extractMaxLength(ctRules, 'description'), 'Content type description');
     const elementNameMax = extractMaxLength(elementRules, 'name');
     const elementDescMax = extractMaxLength(elementRules, 'description');
     for (const el of data.elements) {
       assertMaxLength(el.name, elementNameMax, `Element "${el.name}" name`);
       assertMaxLength(el.description, elementDescMax, `Element "${el.name}" description`);
+    }
+
+    // Match the T4 UI: if the name collides with an existing content type,
+    // auto-suffix it with ` (n)` before sending (issue #52). Existing names are
+    // fetched via the cached getExistingNames() (decoded to friendly form, as the
+    // UI shows them) so this doesn't issue a heavy list request on every create.
+    // The suffixed name is length-validated again, since the suffix can push a
+    // name that was within the limit over it.
+    const existingNames = await this.getExistingNames();
+    const uniqueName = suffixNameForUniqueness(data.name, existingNames);
+    if (uniqueName !== data.name.trim()) {
+      assertMaxLength(uniqueName, ctNameMax, 'Content type name');
     }
 
     const typeMap = await this.getTypeMap();
@@ -1575,7 +1628,7 @@ export class ContentTypeResource {
       method: 'POST',
       path: '/contenttype',
       body: {
-        name: data.name,
+        name: uniqueName,
         description: data.description ?? '',
         type: 10,
         editable: true,
