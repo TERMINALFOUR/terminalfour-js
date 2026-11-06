@@ -17,6 +17,13 @@ export class T4ApiError extends Error {
    * string-matching `statusText`) before blindly retrying a write.
    */
   readonly bodyReadFailed: boolean;
+  /**
+   * The raw `Retry-After` response header value, when the response carried one
+   * (typically on a 429 or 503). Captured so the retry layer (issue #40) can
+   * honour it without re-reading the response. `undefined` when absent or for
+   * network-layer failures that produced no response.
+   */
+  readonly retryAfter?: string;
 
   constructor(params: {
     statusCode: number;
@@ -28,6 +35,8 @@ export class T4ApiError extends Error {
     cause?: Error;
     /** Set when response headers arrived but the body read failed. */
     bodyReadFailed?: boolean;
+    /** Raw `Retry-After` header value from the response, if present. */
+    retryAfter?: string;
   }) {
     const message = `T4 API error: ${params.requestMethod} ${params.requestUrl} responded with ${params.statusCode} ${params.statusText}`;
     super(message, params.cause ? { cause: params.cause } : undefined);
@@ -38,5 +47,6 @@ export class T4ApiError extends Error {
     this.requestUrl = params.requestUrl;
     this.requestMethod = params.requestMethod;
     this.bodyReadFailed = params.bodyReadFailed ?? false;
+    this.retryAfter = params.retryAfter;
   }
 }

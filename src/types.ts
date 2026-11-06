@@ -20,6 +20,57 @@ export interface T4ClientConfig {
    * convention of whitespace-separated `product/version` tokens.
    */
   userAgent?: string;
+  /**
+   * Automatic retry with exponential backoff for transient failures (issue #40).
+   *
+   * Enabled by default with a conservative budget. Only **GET** requests are
+   * retried — GETs are idempotent, so a retry is always safe; non-idempotent
+   * methods (POST/PUT/DELETE) are never auto-retried, to avoid duplicating work
+   * on a failure that may have taken effect server-side.
+   *
+   * Pass a partial object to override individual fields (merged over the
+   * defaults), or `false` (equivalently `{ maxRetries: 0 }`) to disable retry
+   * entirely.
+   */
+  retry?: RetryConfig | false;
+}
+
+/**
+ * Retry/backoff configuration for transient HTTP failures (issue #40). Every
+ * field is optional; omitted fields fall back to the SDK defaults. Only GET
+ * requests are retried.
+ */
+export interface RetryConfig {
+  /**
+   * Maximum number of retries after the initial attempt (so `2` means up to 3
+   * total attempts). `0` disables retry. Defaults to `2`.
+   */
+  maxRetries?: number;
+  /**
+   * HTTP status codes treated as transient and retried (GET only). Network-layer
+   * failures (`T4ApiError` with `statusCode: 0`) are always retried for GET
+   * regardless of this list. Defaults to `[429, 502, 503, 504]`.
+   */
+  retryOn?: number[];
+  /** Base delay (ms) for exponential backoff. Defaults to `500`. */
+  baseDelayMs?: number;
+  /** Maximum delay (ms) any single backoff can reach, after jitter. Defaults to `10000`. */
+  maxDelayMs?: number;
+  /**
+   * Honour a `Retry-After` response header (delta-seconds or HTTP-date) on a
+   * retryable response, overriding the computed backoff (still clamped to
+   * `maxDelayMs`). Defaults to `true`.
+   */
+  respectRetryAfter?: boolean;
+}
+
+/** Retry configuration with all fields resolved to concrete values. */
+export interface ResolvedRetryConfig {
+  maxRetries: number;
+  retryOn: number[];
+  baseDelayMs: number;
+  maxDelayMs: number;
+  respectRetryAfter: boolean;
 }
 
 /**
