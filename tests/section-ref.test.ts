@@ -2548,21 +2548,52 @@ describe('SectionRef — length validation (#49)', () => {
   });
 
   describe('caching', () => {
-    it('fetches GET /validationrule/section once across multiple operations', async () => {
-      const calls: Array<{ method: string; path: string }> = [];
-      (http.request as ReturnType<typeof vi.fn>).mockImplementation(async (opts: { method: string; path: string }) => {
+    const RULES_PATH = '/validationrule/section';
+    const RULES_RESPONSE_DELAY_MS = 20;
+    type RecordedCall = { method: string; path: string };
+
+    function mockSectionEndpoints(client: HttpClient, rulesDelayMs = 0): RecordedCall[] {
+      const calls: RecordedCall[] = [];
+      (client.request as ReturnType<typeof vi.fn>).mockImplementation(async (opts: RecordedCall) => {
         calls.push(opts);
-        if (opts.path === '/validationrule/section') return SECTION_VALIDATION_RULES;
-        if (opts.method === 'GET' && opts.path === '/hierarchy/233/en') return { id: 233, name: 'Old', parent: 100, status: '0', show: true, channels: [] };
-        if (opts.method === 'PUT' && opts.path === '/hierarchy/233/en') return undefined;
+        if (opts.path === RULES_PATH) {
+          if (rulesDelayMs > 0) await new Promise((resolve) => setTimeout(resolve, rulesDelayMs));
+          return SECTION_VALIDATION_RULES;
+        }
+        if (opts.method === 'GET') return { id: 233, name: 'Old', parent: 100, status: '0', show: true, channels: [] };
+        if (opts.method === 'PUT') return undefined;
         throw new Error(`Unexpected: ${opts.method} ${opts.path}`);
       });
+      return calls;
+    }
+
+    const ruleFetches = (calls: RecordedCall[]) => calls.filter((c) => c.path === RULES_PATH);
+
+    it('fetches GET /validationrule/section once across multiple operations', async () => {
+      const calls = mockSectionEndpoints(http);
 
       await ref.update({ name: 'First' });
       await ref.update({ name: 'Second' });
 
-      const ruleFetches = calls.filter((c) => c.path === '/validationrule/section');
-      expect(ruleFetches).toHaveLength(1);
+      expect(ruleFetches(calls)).toHaveLength(1);
+    });
+
+    it('re-fetches GET /validationrule/section after the cache is invalidated', async () => {
+      const calls = mockSectionEndpoints(http);
+
+      await ref.update({ name: 'First' });
+      invalidateAllCaches();
+      await ref.update({ name: 'Second' });
+
+      expect(ruleFetches(calls)).toHaveLength(2);
+    });
+
+    it('shares one in-flight rules fetch across concurrent operations', async () => {
+      const calls = mockSectionEndpoints(http, RULES_RESPONSE_DELAY_MS);
+
+      await Promise.all([ref.update({ name: 'A' }), ref.update({ name: 'B' })]);
+
+      expect(ruleFetches(calls)).toHaveLength(1);
     });
 
     it('shares the cache across SectionRef instances on the same client', async () => {
