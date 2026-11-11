@@ -6,3 +6,4 @@ src/generated-version.ts
 .kiro
 .npmrc
 *-review-*.md
+.agents

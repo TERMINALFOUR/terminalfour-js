@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { ContentTypeResource } from '../src/resources/content-type-resource.js';
+import { ContentTypeResource, ValidationRules } from '../src/resources/content-type-resource.js';
 import { HttpClient } from '../src/http-client.js';
 import { getCacheEpoch } from '../src/utils.js';
 import { ELEMENT_TYPES, HTML_EDITORS } from './helpers.js';
@@ -2358,11 +2358,12 @@ describe('ContentTypeResource length validation (issue #35)', () => {
   let http: HttpClient;
   let resource: ContentTypeResource;
 
-  // Real validation-rule responses from a live 8.4.5 instance.
   const CONTENT_TYPE_RULES = {
     name: [{ msgTemplate: 'notBlank', required: true }, { msgTemplate: 'maxLength', maxLength: 100 }],
     description: [{ msgTemplate: 'maxLength', maxLength: 200, required: false }],
   };
+  const EMOJI_COUNT_EXCEEDING_LIMIT = 51;
+  const UTF16_UNITS_PER_EMOJI = 2;
   const TEMPLATE_ELEMENT_RULES = {
     name: [{ msgTemplate: 'maxLength', maxLength: 50, required: false }],
     description: [{ msgTemplate: 'maxLength', maxLength: 200, required: false }],
@@ -2447,10 +2448,9 @@ describe('ContentTypeResource length validation (issue #35)', () => {
 
     it('counts emoji in UTF-16 units (😀 = 2) for the content type name', async () => {
       baseMock(() => UNHANDLED);
-      // 51 emoji = 102 units > 100 limit.
       await expect(
-        resource.create({ name: '😀'.repeat(51), elements: [{ name: 'Title', type: 'Plain Text' }] }, { wait: false }),
-      ).rejects.toThrow('Content type name is too long (102 characters). The maximum is 100.');
+        resource.create({ name: '😀'.repeat(EMOJI_COUNT_EXCEEDING_LIMIT), elements: [{ name: 'Title', type: 'Plain Text' }] }, { wait: false }),
+      ).rejects.toThrow(`Content type name is too long (${EMOJI_COUNT_EXCEEDING_LIMIT * UTF16_UNITS_PER_EMOJI} characters). The maximum is 100.`);
       expect(sentPost()).toBe(false);
     });
 
@@ -2571,8 +2571,6 @@ describe('ContentTypeResource length validation (issue #35)', () => {
       throw new Error(`Unexpected: ${opts.method} ${opts.path}`);
     });
 
-    // Two over-length creates — each throws during validation, before any POST,
-    // so no invalidateAllCaches() runs between them and the cache is reused.
     await expect(
       resource.create({ name: 'n'.repeat(101), elements: [{ name: 'Title', type: 'Plain Text' }] }, { wait: false }),
     ).rejects.toThrow('too long');
@@ -2582,5 +2580,138 @@ describe('ContentTypeResource length validation (issue #35)', () => {
 
     expect(ruleCalls.filter((p) => p === '/validationrule/contenttype')).toHaveLength(1);
     expect(ruleCalls.filter((p) => p === '/validationrule/templateElement')).toHaveLength(1);
+  });
+});
+
+describe('ValidationRules', () => {
+  const CONTENT_TYPE_RULES = {
+    name: [{ msgTemplate: 'maxLength', maxLength: 100 }],
+    description: [{ msgTemplate: 'maxLength', maxLength: 200 }],
+  };
+  const TEMPLATE_ELEMENT_RULES = {
+    name: [{ msgTemplate: 'maxLength', maxLength: 50 }],
+    description: [{ msgTemplate: 'maxLength', maxLength: 200 }],
+  };
+  const ELEMENT_NAME_LIMIT = 50;
+  const ELEMENT_DESCRIPTION_LIMIT = 200;
+  const CONTENT_TYPE_NAME_LIMIT = 100;
+  const CONTENT_TYPE_DESCRIPTION_LIMIT = 200;
+
+  let http: HttpClient;
+  let rules: ValidationRules;
+
+  const serveRules = (contentTypeRules: unknown = CONTENT_TYPE_RULES, elementRules: unknown = TEMPLATE_ELEMENT_RULES) => {
+    (http.request as ReturnType<typeof vi.fn>).mockImplementation(async (opts: { path: string }) => {
+      if (opts.path === '/validationrule/contenttype') return contentTypeRules;
+      if (opts.path === '/validationrule/templateElement') return elementRules;
+      throw new Error(`Unexpected: ${opts.path}`);
+    });
+  };
+
+  beforeEach(() => {
+    http = mockHttpClient();
+    rules = new ValidationRules(http);
+  });
+
+  describe('assertElement()', () => {
+    it('throws for an over-length element name with the exact message', async () => {
+      serveRules();
+      const name = 'e'.repeat(ELEMENT_NAME_LIMIT + 1);
+      await expect(rules.assertElement({ name })).rejects.toThrow(
+        `Element "${name}" name is too long (${ELEMENT_NAME_LIMIT + 1} characters). The maximum is ${ELEMENT_NAME_LIMIT}.`,
+      );
+    });
+
+    it('throws for an over-length element description with the exact message', async () => {
+      serveRules();
+      await expect(rules.assertElement({ name: 'Title', description: 'd'.repeat(ELEMENT_DESCRIPTION_LIMIT + 1) })).rejects.toThrow(
+        `Element "Title" description is too long (${ELEMENT_DESCRIPTION_LIMIT + 1} characters). The maximum is ${ELEMENT_DESCRIPTION_LIMIT}.`,
+      );
+    });
+
+    it('passes values at exactly the limit', async () => {
+      serveRules();
+      await expect(
+        rules.assertElement({ name: 'e'.repeat(ELEMENT_NAME_LIMIT), description: 'd'.repeat(ELEMENT_DESCRIPTION_LIMIT) }),
+      ).resolves.toBeUndefined();
+    });
+
+    it('skips validation when the rule for the field is missing', async () => {
+      serveRules({}, {});
+      await expect(rules.assertElement({ name: 'e'.repeat(5000), description: 'd'.repeat(5000) })).resolves.toBeUndefined();
+    });
+
+    it('skips validation when the rules fetch fails', async () => {
+      (http.request as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('500'));
+      await expect(rules.assertElement({ name: 'e'.repeat(5000) })).resolves.toBeUndefined();
+    });
+  });
+
+  describe('assertElements()', () => {
+    it('passes for an empty list', async () => {
+      serveRules();
+      await expect(rules.assertElements([])).resolves.toBeUndefined();
+    });
+
+    it('throws for the first over-length element in the list', async () => {
+      serveRules();
+      await expect(
+        rules.assertElements([{ name: 'Fine' }, { name: 'Bad', description: 'd'.repeat(ELEMENT_DESCRIPTION_LIMIT + 1) }]),
+      ).rejects.toThrow('Element "Bad" description is too long');
+    });
+
+    it('fetches the template element rules once for many elements', async () => {
+      serveRules();
+      await rules.assertElements([{ name: 'A' }, { name: 'B' }, { name: 'C' }]);
+      expect(http.request).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe('assertContentType()', () => {
+    it('throws for an over-length content type name', async () => {
+      serveRules();
+      await expect(rules.assertContentType({ name: 'n'.repeat(CONTENT_TYPE_NAME_LIMIT + 1) }, [])).rejects.toThrow(
+        `Content type name is too long (${CONTENT_TYPE_NAME_LIMIT + 1} characters). The maximum is ${CONTENT_TYPE_NAME_LIMIT}.`,
+      );
+    });
+
+    it('throws for an over-length content type description', async () => {
+      serveRules();
+      await expect(
+        rules.assertContentType({ name: 'Blog', description: 'x'.repeat(CONTENT_TYPE_DESCRIPTION_LIMIT + 1) }, []),
+      ).rejects.toThrow(
+        `Content type description is too long (${CONTENT_TYPE_DESCRIPTION_LIMIT + 1} characters). The maximum is ${CONTENT_TYPE_DESCRIPTION_LIMIT}.`,
+      );
+    });
+
+    it('throws for an over-length element name', async () => {
+      serveRules();
+      await expect(
+        rules.assertContentType({ name: 'Blog' }, [{ name: 'e'.repeat(ELEMENT_NAME_LIMIT + 1) }]),
+      ).rejects.toThrow('is too long');
+    });
+
+    it('passes when the content type and every element are within limits', async () => {
+      serveRules();
+      await expect(
+        rules.assertContentType(
+          { name: 'n'.repeat(CONTENT_TYPE_NAME_LIMIT), description: 'x'.repeat(CONTENT_TYPE_DESCRIPTION_LIMIT) },
+          [{ name: 'e'.repeat(ELEMENT_NAME_LIMIT), description: 'd'.repeat(ELEMENT_DESCRIPTION_LIMIT) }],
+        ),
+      ).resolves.toBeUndefined();
+    });
+
+    it('validates a record of fields via Object.values', async () => {
+      serveRules();
+      const fields = { Bad: { name: 'Bad', description: 'd'.repeat(ELEMENT_DESCRIPTION_LIMIT + 1) } };
+      await expect(rules.assertContentType({ name: 'Blog' }, Object.values(fields))).rejects.toThrow('Element "Bad" description');
+    });
+
+    it('skips validation when the rules fetch fails', async () => {
+      (http.request as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('500'));
+      await expect(
+        rules.assertContentType({ name: 'n'.repeat(5000) }, [{ name: 'e'.repeat(5000) }]),
+      ).resolves.toBeUndefined();
+    });
   });
 });

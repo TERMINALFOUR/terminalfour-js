@@ -47,6 +47,9 @@ interface ApiContentType {
 /** The content type category ID that marks a system content type. */
 const SYSTEM_CONTENT_TYPE = 30;
 
+/** Anything carrying a name and description, so content types, fields and raw element input can all be length-validated. */
+export type NamedDescribed = { name?: string | null; description?: string | null };
+
 /**
  * Fetches and caches the T4 length-validation rules for content types and
  * template elements.
@@ -86,6 +89,41 @@ export class ValidationRules {
   /** Length-validation rules for a template element's name/description. */
   templateElement(): Promise<ValidationRuleSet> {
     return this.load('/validationrule/templateElement', this.templateElementCache, (p) => { this.templateElementPromise = p; }, () => this.templateElementPromise);
+  }
+
+  /**
+   * Throws if an element's name or description exceeds the live template-element
+   * limits. Skips silently when the rules are unavailable.
+   */
+  async assertElement(element: NamedDescribed): Promise<void> {
+    this.assertElementAgainst(element, await this.templateElement());
+  }
+
+  /** Validates every element's name and description against the live limits. */
+  async assertElements(elements: Iterable<NamedDescribed>): Promise<void> {
+    const rules = await this.templateElement();
+    for (const element of elements) {
+      this.assertElementAgainst(element, rules);
+    }
+  }
+
+  /**
+   * Throws if the content type's own name or description, or any of its
+   * elements' name or description, exceeds the live T4 limits. Runs before any
+   * write request so an over-length value fails clearly instead of a server 500.
+   */
+  async assertContentType(contentType: NamedDescribed, elements: Iterable<NamedDescribed>): Promise<void> {
+    const [contentTypeRules, elementRules] = await Promise.all([this.contentType(), this.templateElement()]);
+    assertMaxLength(contentType.name, extractMaxLength(contentTypeRules, 'name'), 'Content type name');
+    assertMaxLength(contentType.description, extractMaxLength(contentTypeRules, 'description'), 'Content type description');
+    for (const element of elements) {
+      this.assertElementAgainst(element, elementRules);
+    }
+  }
+
+  private assertElementAgainst(element: NamedDescribed, rules: ValidationRuleSet): void {
+    assertMaxLength(element.name, extractMaxLength(rules, 'name'), `Element "${element.name}" name`);
+    assertMaxLength(element.description, extractMaxLength(rules, 'description'), `Element "${element.name}" description`);
   }
 
   /**
@@ -695,11 +733,7 @@ export class ContentType implements ContentTypeData {
     if (!data.type?.trim()) throw new Error('Field type is required');
     if (this.fields[data.name]) throw new Error(`Field "${data.name}" already exists on this content type`);
 
-    // Validate name/description length against the live T4 limits (issue #35)
-    // before any network call, so an over-length value fails fast and clearly.
-    const elementRules = await this._validationRules.templateElement();
-    assertMaxLength(data.name, extractMaxLength(elementRules, 'name'), `Element "${data.name}" name`);
-    assertMaxLength(data.description, extractMaxLength(elementRules, 'description'), `Element "${data.name}" description`);
+    await this._validationRules.assertElement(data);
 
     // Resolve type name to ID via GET /type/
     const types = await this._httpClient.request<Array<{ id: number; name: string; listType: boolean }>>({
@@ -955,8 +989,7 @@ export class ContentType implements ContentTypeData {
   async save(options?: WaitOption): Promise<void> {
     assertRequired(this.name, 'Content type name');
     assertGroupsValid(this.primaryGroup, this.sharedGroups);
-    await this._validateLengths();
-    await this._validateElementLengths();
+    await this._validationRules.assertContentType(this, Object.values(this.fields));
 
     // Capture what's changing BEFORE _rawData is overwritten, so the post-write
     // settle poll knows what to confirm is readable.
@@ -1078,32 +1111,6 @@ export class ContentType implements ContentTypeData {
     // Wait until the write is readable from the server (issue #37). Runs after
     // the cache invalidation so the poll reads fresh data.
     await waitForContentTypeReadable(this._httpClient, this.id, settlePredicate, options);
-  }
-
-  /**
-   * Validates this content type's own name and description lengths against the
-   * live T4 limits (issue #35), throwing a clear SDK error before the PUT rather
-   * than letting an over-length value trigger a server 500.
-   */
-  private async _validateLengths(): Promise<void> {
-    const rules = await this._validationRules.contentType();
-    assertMaxLength(this.name, extractMaxLength(rules, 'name'), 'Content type name');
-    assertMaxLength(this.description, extractMaxLength(rules, 'description'), 'Content type description');
-  }
-
-  /**
-   * Validates every field's name and description lengths against the live T4
-   * template-element limits (issue #35). Covers additions and renames/edits made
-   * before `save()`.
-   */
-  private async _validateElementLengths(): Promise<void> {
-    const rules = await this._validationRules.templateElement();
-    const nameMax = extractMaxLength(rules, 'name');
-    const descMax = extractMaxLength(rules, 'description');
-    for (const field of Object.values(this.fields)) {
-      assertMaxLength(field.name, nameMax, `Element "${field.name}" name`);
-      assertMaxLength(field.description, descMax, `Element "${field.name}" description`);
-    }
   }
 
   /**
@@ -1445,21 +1452,7 @@ export class ContentTypeResource {
       throw new Error(`Only Plain Text elements can be used as filename. "${filenameElements[0].name}" is type "${filenameElements[0].type}"`);
     }
 
-    // Validate name/description lengths against the live T4 limits (issue #35)
-    // before building the request, so an over-length value fails fast and
-    // clearly instead of triggering a server 500.
-    const [ctRules, elementRules] = await Promise.all([
-      this.validationRules.contentType(),
-      this.validationRules.templateElement(),
-    ]);
-    assertMaxLength(data.name, extractMaxLength(ctRules, 'name'), 'Content type name');
-    assertMaxLength(data.description, extractMaxLength(ctRules, 'description'), 'Content type description');
-    const elementNameMax = extractMaxLength(elementRules, 'name');
-    const elementDescMax = extractMaxLength(elementRules, 'description');
-    for (const el of data.elements) {
-      assertMaxLength(el.name, elementNameMax, `Element "${el.name}" name`);
-      assertMaxLength(el.description, elementDescMax, `Element "${el.name}" description`);
-    }
+    await this.validationRules.assertContentType(data, data.elements);
 
     const typeMap = await this.getTypeMap();
     const reverseTypeMap = new Map(Array.from(typeMap.entries()).map(([id, name]) => [name.toLowerCase(), id]));

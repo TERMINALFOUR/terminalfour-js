@@ -631,7 +631,6 @@ describe('assertMaxLength', () => {
   });
 
   it('measures length in JS string units (UTF-16 code units), not code points', () => {
-    // '😀' is one code point but two UTF-16 units, so 100 of them = 200 units.
     expect(() => assertMaxLength('😀'.repeat(100), 200, 'X')).not.toThrow();
     expect(() => assertMaxLength('😀'.repeat(101), 200, 'X')).toThrow('is too long (202 characters)');
   });
