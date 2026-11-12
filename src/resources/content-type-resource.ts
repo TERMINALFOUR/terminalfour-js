@@ -1260,6 +1260,24 @@ export class ContentTypeResource {
     return this.existingNamesPromise;
   }
 
+  /**
+   * Returns `name` suffixed with ` (n)` when it collides with an existing content type.
+   *
+   * Runs after all other create() input has been validated, immediately before the
+   * POST, so invalid input never triggers the names lookup. The names fetch is
+   * intentionally not error-swallowed: if names can't be read, uniqueness can't be
+   * guaranteed. The suffixed name's length is re-validated only when suffixing
+   * changed the name.
+   */
+  private async resolveUniqueName(name: string): Promise<string> {
+    const existingNames = await this.getExistingNames();
+    const uniqueName = suffixNameForUniqueness(name, existingNames);
+    if (uniqueName !== name.trim()) {
+      await this.validationRules.assertContentTypeName(uniqueName);
+    }
+    return uniqueName;
+  }
+
   /** Resolves listName for all fields that have a non-zero listId. */
   private async resolveListNames(contentTypes: ContentTypeData[]): Promise<void> {
     // Collect unique list IDs across all content types
@@ -1513,12 +1531,6 @@ export class ContentTypeResource {
 
     await this.validationRules.assertContentType(data, data.elements);
 
-    const existingNames = await this.getExistingNames();
-    const uniqueName = suffixNameForUniqueness(data.name, existingNames);
-    if (uniqueName !== data.name.trim()) {
-      await this.validationRules.assertContentTypeName(uniqueName);
-    }
-
     const typeMap = await this.getTypeMap();
     const reverseTypeMap = new Map(Array.from(typeMap.entries()).map(([id, name]) => [name.toLowerCase(), id]));
 
@@ -1628,6 +1640,8 @@ export class ContentTypeResource {
         elementIdForFilename = elId;
       }
     }
+
+    const uniqueName = await this.resolveUniqueName(data.name);
 
     const raw = await this.httpClient.request<ApiContentType>({
       method: 'POST',

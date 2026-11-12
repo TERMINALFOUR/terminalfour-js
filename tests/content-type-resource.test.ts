@@ -2913,7 +2913,7 @@ describe('ContentTypeResource.create() name auto-suffix (#52)', () => {
    * fetched. `listCalls` increments per fetch so the caching assertions can read
    * it. Length-rule endpoints return empty so length validation never interferes.
    */
-  function mockWithListCounter() {
+  function mockWithListCounter({ postFails = false } = {}) {
     const counter = { listCalls: 0 };
     (http.request as ReturnType<typeof vi.fn>).mockImplementation(async (opts: { method: string; path: string; body?: { name?: string } }) => {
       if (opts.path === '/type/') return ELEMENT_TYPES;
@@ -2924,6 +2924,7 @@ describe('ContentTypeResource.create() name auto-suffix (#52)', () => {
         return [{ id: 101, name: 'Existing', alias: 'Existing', type: 10 }];
       }
       if (opts.method === 'POST' && opts.path === '/contenttype') {
+        if (postFails) throw new Error('POST rejected');
         return { id: 500, name: opts.body?.name, alias: opts.body?.name, description: '', contentTypeElements: [] };
       }
       throw new Error(`Unexpected: ${opts.method} ${opts.path}`);
@@ -2932,16 +2933,45 @@ describe('ContentTypeResource.create() name auto-suffix (#52)', () => {
   }
 
   it('caches the existing-names list across creates that do not invalidate', async () => {
+    const counter = mockWithListCounter({ postFails: true });
+
+    await expect(
+      resource.create({ name: 'A', elements: titleElement }, { wait: false }),
+    ).rejects.toThrow('POST rejected');
+    await expect(
+      resource.create({ name: 'B', elements: titleElement }, { wait: false }),
+    ).rejects.toThrow('POST rejected');
+
+    expect(counter.listCalls).toBe(1);
+  });
+
+  it('does not fetch the existing names list when an element type is unknown', async () => {
     const counter = mockWithListCounter();
 
     await expect(
       resource.create({ name: 'A', elements: [{ name: 'X', type: 'FakeType' }] }, { wait: false }),
-    ).rejects.toThrow('Unknown element type');
+    ).rejects.toThrow(/Unknown element type/);
+
+    expect(counter.listCalls).toBe(0);
+  });
+
+  it('does not fetch the existing names list when a list-based element is missing its listId', async () => {
+    const counter = mockWithListCounter();
+
     await expect(
-      resource.create({ name: 'B', elements: [{ name: 'X', type: 'FakeType' }] }, { wait: false }),
-    ).rejects.toThrow('Unknown element type');
+      resource.create({ name: 'A', elements: [{ name: 'X', type: 'Select Box' }] }, { wait: false }),
+    ).rejects.toThrow(/requires a listId/);
+
+    expect(counter.listCalls).toBe(0);
+  });
+
+  it('fetches the existing names list once and posts the suffixed name on a valid create', async () => {
+    const counter = mockWithListCounter();
+
+    await resource.create({ name: 'Existing', elements: titleElement }, { wait: false });
 
     expect(counter.listCalls).toBe(1);
+    expect(postedName()).toBe('Existing (1)');
   });
 
   it('refetches the existing-names list after a successful create invalidates caches', async () => {
