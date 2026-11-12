@@ -1,6 +1,6 @@
 import { HttpClient } from '../http-client.js';
 import { ContentTypeData, ContentTypeFieldDef, WaitOption } from '../types.js';
-import { decodeHtmlEntities, AUTH_LEVEL_MAP, AUTH_LEVEL_REVERSE, debugWarn, DEFAULT_CACHE_TTL, DEFAULT_WRITE_WAIT_TIMEOUT, WRITE_WAIT_POLL_INTERVAL, sleep, getCacheEpoch, invalidateAllCaches, readPrimaryGroup, readSharedGroups, writePrimaryGroup, writeSharedGroups, assertGroupsValid, assertRequired, assertNotEmptyIfPresent, defaultMaxSizeForType, RawPrimaryGroup } from '../utils.js';
+import { decodeHtmlEntities, AUTH_LEVEL_MAP, AUTH_LEVEL_REVERSE, debugWarn, DEFAULT_CACHE_TTL, DEFAULT_WRITE_WAIT_TIMEOUT, WRITE_WAIT_POLL_INTERVAL, sleep, getCacheEpoch, invalidateAllCaches, readPrimaryGroup, readSharedGroups, writePrimaryGroup, writeSharedGroups, assertGroupsValid, assertRequired, assertNotEmptyIfPresent, defaultMaxSizeForType, extractMaxLength, assertMaxLength, TtlValue, ValidationRuleSet, RawPrimaryGroup } from '../utils.js';
 
 /** Raw content type element from the API response */
 interface ApiContentTypeElement {
@@ -46,6 +46,121 @@ interface ApiContentType {
 
 /** The content type category ID that marks a system content type. */
 const SYSTEM_CONTENT_TYPE = 30;
+
+/** Anything carrying a name and description, so content types, fields and raw element input can all be length-validated. */
+export type NamedDescribed = { name?: string | null; description?: string | null };
+
+/**
+ * Fetches and caches the T4 length-validation rules for content types and
+ * template elements.
+ *
+ * T4 limits the length of a content type's name/description and an element's
+ * name/description, and rejects an over-length value with an opaque 500 (issue
+ * #35). The limits come from `GET /validationrule/contenttype` and
+ * `GET /validationrule/templateElement`; they are instance-wide and effectively
+ * static, so each response is cached in a `TtlValue` (the same TTL + global
+ * cache-epoch mechanism as every other SDK cache, so `clearCache()` invalidates
+ * it).
+ *
+ * One instance is created per `ContentTypeResource` and threaded into every
+ * `ContentType` so saves and field edits validate against the same cache. A
+ * standalone `ContentType` (e.g. in tests) builds its own from the HttpClient.
+ *
+ * A fetch failure or unexpected shape resolves to an empty rule set: validation
+ * is skipped and the write proceeds, so a transient lookup failure never blocks
+ * a legitimate change — the server remains the backstop.
+ */
+export class ValidationRules {
+  private readonly httpClient: HttpClient;
+  private readonly contentTypeCache = new TtlValue<ValidationRuleSet>();
+  private readonly templateElementCache = new TtlValue<ValidationRuleSet>();
+  private contentTypePromise: Promise<ValidationRuleSet> | null = null;
+  private templateElementPromise: Promise<ValidationRuleSet> | null = null;
+
+  constructor(httpClient: HttpClient) {
+    this.httpClient = httpClient;
+  }
+
+  /** Length-validation rules for a content type's own name/description. */
+  contentType(): Promise<ValidationRuleSet> {
+    return this.load('/validationrule/contenttype', this.contentTypeCache, (p) => { this.contentTypePromise = p; }, () => this.contentTypePromise);
+  }
+
+  /** Length-validation rules for a template element's name/description. */
+  templateElement(): Promise<ValidationRuleSet> {
+    return this.load('/validationrule/templateElement', this.templateElementCache, (p) => { this.templateElementPromise = p; }, () => this.templateElementPromise);
+  }
+
+  /**
+   * Throws if an element's name or description exceeds the live template-element
+   * limits. Skips silently when the rules are unavailable.
+   */
+  async assertElement(element: NamedDescribed): Promise<void> {
+    this.assertElementAgainst(element, await this.templateElement());
+  }
+
+  /** Validates every element's name and description against the live limits. */
+  async assertElements(elements: Iterable<NamedDescribed>): Promise<void> {
+    const rules = await this.templateElement();
+    for (const element of elements) {
+      this.assertElementAgainst(element, rules);
+    }
+  }
+
+  /**
+   * Throws if the content type's own name or description, or any of its
+   * elements' name or description, exceeds the live T4 limits. Runs before any
+   * write request so an over-length value fails clearly instead of a server 500.
+   */
+  async assertContentType(contentType: NamedDescribed, elements: Iterable<NamedDescribed>): Promise<void> {
+    const [contentTypeRules, elementRules] = await Promise.all([this.contentType(), this.templateElement()]);
+    assertMaxLength(contentType.name, extractMaxLength(contentTypeRules, 'name'), 'Content type name');
+    assertMaxLength(contentType.description, extractMaxLength(contentTypeRules, 'description'), 'Content type description');
+    for (const element of elements) {
+      this.assertElementAgainst(element, elementRules);
+    }
+  }
+
+  private assertElementAgainst(element: NamedDescribed, rules: ValidationRuleSet): void {
+    assertMaxLength(element.name, extractMaxLength(rules, 'name'), `Element "${element.name}" name`);
+    assertMaxLength(element.description, extractMaxLength(rules, 'description'), `Element "${element.name}" description`);
+  }
+
+  /**
+   * Returns the cached rule set, or fetches it once (deduping concurrent calls
+   * via the in-flight promise). On any error the result is an empty rule set so
+   * callers skip validation rather than block the write.
+   */
+  private load(
+    path: string,
+    cache: TtlValue<ValidationRuleSet>,
+    setPromise: (p: Promise<ValidationRuleSet> | null) => void,
+    getPromise: () => Promise<ValidationRuleSet> | null,
+  ): Promise<ValidationRuleSet> {
+    const cached = cache.get();
+    if (cached) return Promise.resolve(cached);
+
+    const existing = getPromise();
+    if (existing) return existing;
+
+    const promise = this.httpClient
+      .request<ValidationRuleSet>({ method: 'GET', path })
+      .then((rules) => {
+        const value = rules && typeof rules === 'object' ? rules : {};
+        cache.set(value);
+        setPromise(null);
+        return value;
+      })
+      .catch((error) => {
+        debugWarn(`Failed to fetch validation rules from ${path}; skipping length validation`, error);
+        setPromise(null);
+        return {} as ValidationRuleSet;
+      });
+
+    setPromise(promise);
+    return promise;
+  }
+}
 
 /**
  * Waits until a content type write is readable from the server (issue #37).
@@ -329,8 +444,9 @@ export class ContentType implements ContentTypeData {
   private _rawData!: ApiContentType;
   private _removedElementIds!: Set<number>;
   private _exemptSystemTypeIdsCache!: Set<number> | null;
+  private readonly _validationRules!: ValidationRules;
 
-  constructor(data: ContentTypeData, httpClient: HttpClient, rawData?: ApiContentType) {
+  constructor(data: ContentTypeData, httpClient: HttpClient, rawData?: ApiContentType, validationRules?: ValidationRules) {
     this.id = data.id;
     this.name = data.name;
     this.description = data.description;
@@ -344,6 +460,7 @@ export class ContentType implements ContentTypeData {
     Object.defineProperty(this, '_rawData', { value: rawData ?? ({} as ApiContentType), enumerable: false, writable: true });
     Object.defineProperty(this, '_removedElementIds', { value: new Set(), enumerable: false, writable: true });
     Object.defineProperty(this, '_exemptSystemTypeIdsCache', { value: null, enumerable: false, writable: true });
+    Object.defineProperty(this, '_validationRules', { value: validationRules ?? new ValidationRules(httpClient), enumerable: false });
 
     const contentTypeId = this.id;
     let layoutElementsCache: LayoutElement[] | null = null;
@@ -616,6 +733,8 @@ export class ContentType implements ContentTypeData {
     if (!data.type?.trim()) throw new Error('Field type is required');
     if (this.fields[data.name]) throw new Error(`Field "${data.name}" already exists on this content type`);
 
+    await this._validationRules.assertElement(data);
+
     // Resolve type name to ID via GET /type/
     const types = await this._httpClient.request<Array<{ id: number; name: string; listType: boolean }>>({
       method: 'GET',
@@ -870,6 +989,7 @@ export class ContentType implements ContentTypeData {
   async save(options?: WaitOption): Promise<void> {
     assertRequired(this.name, 'Content type name');
     assertGroupsValid(this.primaryGroup, this.sharedGroups);
+    await this._validationRules.assertContentType(this, Object.values(this.fields));
 
     // Capture what's changing BEFORE _rawData is overwritten, so the post-write
     // settle poll knows what to confirm is readable.
@@ -1051,6 +1171,7 @@ export class ContentType implements ContentTypeData {
  */
 export class ContentTypeResource {
   private readonly httpClient: HttpClient;
+  private readonly validationRules: ValidationRules;
   private typeMapPromise: Promise<Map<number, string>> | null = null;
   private typeMapExpiresAt = 0;
   private typeMapEpoch = -1;
@@ -1060,6 +1181,7 @@ export class ContentTypeResource {
 
   constructor(httpClient: HttpClient) {
     this.httpClient = httpClient;
+    this.validationRules = new ValidationRules(httpClient);
   }
 
   /** Fetches and caches element type ID → name map from GET /type/ */
@@ -1140,7 +1262,7 @@ export class ContentTypeResource {
     const results = raw.map((r) => mapContentType(r, typeMap, editorMap));
     const dataOnly = results.map((r) => r.data);
     await this.resolveListNames(dataOnly);
-    return results.map((r) => new ContentType(r.data, this.httpClient, r.rawData));
+    return results.map((r) => new ContentType(r.data, this.httpClient, r.rawData, this.validationRules));
   }
 
   /**
@@ -1154,7 +1276,7 @@ export class ContentTypeResource {
     ]);
     const result = mapContentType(raw, typeMap, editorMap);
     await this.resolveListNames([result.data]);
-    return new ContentType(result.data, this.httpClient, result.rawData);
+    return new ContentType(result.data, this.httpClient, result.rawData, this.validationRules);
   }
 
   /**
@@ -1330,6 +1452,8 @@ export class ContentTypeResource {
       throw new Error(`Only Plain Text elements can be used as filename. "${filenameElements[0].name}" is type "${filenameElements[0].type}"`);
     }
 
+    await this.validationRules.assertContentType(data, data.elements);
+
     const typeMap = await this.getTypeMap();
     const reverseTypeMap = new Map(Array.from(typeMap.entries()).map(([id, name]) => [name.toLowerCase(), id]));
 
@@ -1478,6 +1602,6 @@ export class ContentTypeResource {
     const editorMap = await this.getEditorMap();
     const result = mapContentType(raw, typeMap, editorMap);
     await this.resolveListNames([result.data]);
-    return new ContentType(result.data, this.httpClient, result.rawData);
+    return new ContentType(result.data, this.httpClient, result.rawData, this.validationRules);
   }
 }

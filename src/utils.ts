@@ -305,6 +305,66 @@ export function assertNotEmptyIfPresent(value: string | null | undefined, label:
   }
 }
 
+/**
+ * A single validation rule as returned by the T4 `GET /validationrule/{entity}`
+ * endpoints. Only `maxLength` rules carry a `maxLength` value; other templates
+ * (e.g. `notBlank`) omit it.
+ */
+export interface ValidationRule {
+  msgTemplate: string;
+  maxLength?: number;
+  required?: boolean;
+}
+
+/**
+ * A set of validation rules keyed by field name, as returned by
+ * `GET /validationrule/contenttype` and `GET /validationrule/templateElement`.
+ *
+ * Example (`contenttype`):
+ * ```json
+ * {
+ *   "name": [{ "msgTemplate": "notBlank", "required": true }, { "msgTemplate": "maxLength", "maxLength": 100 }],
+ *   "description": [{ "msgTemplate": "maxLength", "maxLength": 200, "required": false }]
+ * }
+ * ```
+ */
+export type ValidationRuleSet = Record<string, ValidationRule[]>;
+
+/**
+ * Extracts the maximum length for a field from a validation rule set.
+ *
+ * Returns the `maxLength` of the field's `maxLength` rule, or `undefined` when
+ * the rule set is missing, the field is absent, no `maxLength` rule exists, or
+ * the value is not a positive number. A missing limit means "do not validate"
+ * — callers skip the check rather than guessing a bound.
+ */
+export function extractMaxLength(rules: ValidationRuleSet | undefined, field: string): number | undefined {
+  const fieldRules = rules?.[field];
+  if (!Array.isArray(fieldRules)) return undefined;
+  const rule = fieldRules.find((r) => r?.msgTemplate === 'maxLength');
+  if (!rule || typeof rule.maxLength !== 'number' || rule.maxLength <= 0) return undefined;
+  return rule.maxLength;
+}
+
+/**
+ * Asserts that a string does not exceed a maximum length, measured in JS string
+ * units (UTF-16 code units, i.e. `String.prototype.length`). This matches how
+ * T4 counts: a surrogate-pair emoji such as `😀` counts as 2 units.
+ *
+ * No-op when `value` is absent/empty or `max` is `undefined` (no known limit).
+ * Throws `"<Label> is too long (<n> characters). The maximum is <max>."` when
+ * the length exceeds the limit, so the SDK rejects an over-length value with a
+ * clear message instead of letting T4 fail the request with an opaque 500.
+ */
+export function assertMaxLength(value: string | null | undefined, max: number | undefined, label: string): void {
+  if (value == null || value === '' || max === undefined) return;
+  if (value.length > max) {
+    throw new Error(
+      `${label} is too long (${value.length} characters). The maximum is ${max}.`,
+    );
+  }
+}
+
 
 /** Accepted file input: a file path, URL, Blob, ReadableStream, or { file, filename } object */
 export type FileInput = string | Blob | NodeJS.ReadableStream | { file: string | Blob | NodeJS.ReadableStream; filename?: string };
