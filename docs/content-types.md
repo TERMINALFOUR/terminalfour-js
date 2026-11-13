@@ -128,6 +128,20 @@ The limits are read live from the T4 instance (they are instance-wide, so they a
 
 Length is measured in JavaScript string units (UTF-16 code units), matching how T4 counts — an emoji such as `😀` counts as 2. The same check runs on `create()`, `update()` (including `addFields` and `updateFields`), `addField()`, and `save()`. If the limits can't be fetched (for example the endpoint is unreachable), the SDK skips the check and lets the server decide, so a transient lookup failure never blocks a valid change.
 
+### Unique names
+
+The T4 interface keeps content type names unique: if you create one whose name is already taken, it quietly adds a numbered suffix. For example, `News Article` becomes `News Article (1)`, then `News Article (2)`, and so on. `create()` does the same thing, so the SDK matches what you would get in the UI:
+
+```typescript
+// A content type named "News Article" already exists.
+const ct = await t4.contentTypes.create({
+  name: 'News Article',
+  elements: [{ name: 'Title', type: 'Plain Text' }],
+});
+
+console.log(ct.name); // "News Article (1)"
+```
+
 ### List-based fields
 
 `Select Box`, `Radio Button`, `Check Box`, `Multiple Select`, `Multi-select List`, `Cascading List`, and `Keyword Selector` fields require `listId`:

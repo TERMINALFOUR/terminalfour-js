@@ -1,6 +1,6 @@
 import { HttpClient } from '../http-client.js';
 import { ContentTypeData, ContentTypeFieldDef, WaitOption } from '../types.js';
-import { decodeHtmlEntities, AUTH_LEVEL_MAP, AUTH_LEVEL_REVERSE, debugWarn, DEFAULT_CACHE_TTL, DEFAULT_WRITE_WAIT_TIMEOUT, WRITE_WAIT_POLL_INTERVAL, sleep, getCacheEpoch, invalidateAllCaches, readPrimaryGroup, readSharedGroups, writePrimaryGroup, writeSharedGroups, assertGroupsValid, assertRequired, assertNotEmptyIfPresent, defaultMaxSizeForType, extractMaxLength, assertMaxLength, TtlValue, ValidationRuleSet, RawPrimaryGroup } from '../utils.js';
+import { decodeHtmlEntities, AUTH_LEVEL_MAP, AUTH_LEVEL_REVERSE, debugWarn, DEFAULT_CACHE_TTL, DEFAULT_WRITE_WAIT_TIMEOUT, WRITE_WAIT_POLL_INTERVAL, sleep, getCacheEpoch, invalidateAllCaches, readPrimaryGroup, readSharedGroups, writePrimaryGroup, writeSharedGroups, assertGroupsValid, assertRequired, assertNotEmptyIfPresent, suffixNameForUniqueness, defaultMaxSizeForType, extractMaxLength, assertMaxLength, TtlValue, ValidationRuleSet, RawPrimaryGroup } from '../utils.js';
 
 /** Raw content type element from the API response */
 interface ApiContentTypeElement {
@@ -119,6 +119,16 @@ export class ValidationRules {
     for (const element of elements) {
       this.assertElementAgainst(element, elementRules);
     }
+  }
+
+  /**
+   * Throws if a content type name exceeds the live T4 limit. Used to re-check a
+   * name after auto-suffixing, since the ` (n)` suffix can push a name that was
+   * within the limit over it. Skips silently when the rules are unavailable.
+   */
+  async assertContentTypeName(name: string): Promise<void> {
+    const rules = await this.contentType();
+    assertMaxLength(name, extractMaxLength(rules, 'name'), 'Content type name');
   }
 
   private assertElementAgainst(element: NamedDescribed, rules: ValidationRuleSet): void {
@@ -1178,6 +1188,9 @@ export class ContentTypeResource {
   private editorMapPromise: Promise<Map<number, string>> | null = null;
   private editorMapExpiresAt = 0;
   private editorMapEpoch = -1;
+  private existingNamesPromise: Promise<string[]> | null = null;
+  private existingNamesExpiresAt = 0;
+  private existingNamesEpoch = -1;
 
   constructor(httpClient: HttpClient) {
     this.httpClient = httpClient;
@@ -1211,6 +1224,58 @@ export class ContentTypeResource {
       );
     }
     return this.editorMapPromise;
+  }
+
+  /**
+   * Fetches and caches the decoded names of all existing content types, used by
+   * `create()` to auto-suffix a colliding name (issue #52).
+   *
+   * Caching matters because `GET /contenttype?excludeElements=true` returns every
+   * content type on the instance, so an uncached fetch on every `create()` could
+   * be heavy. It is safe because the cache is gated on the global cache epoch
+   * (the same TTL + epoch idiom as `getTypeMap`/`getEditorMap`): a successful
+   * `create()` calls `invalidateAllCaches()`, bumping the epoch, so the very next
+   * create refetches and sees the name just created — two creates in a row can't
+   * race into a stale suffix.
+   *
+   * Unlike `getEditorMap`, a fetch failure is **not** swallowed: if existing
+   * names can't be read, uniqueness can't be guaranteed, so the rejection
+   * propagates (per DECISIONS #123). The in-flight promise is cleared on
+   * rejection so a transient failure doesn't poison the cache for the TTL window.
+   */
+  private getExistingNames(): Promise<string[]> {
+    if (!this.existingNamesPromise || Date.now() > this.existingNamesExpiresAt || this.existingNamesEpoch < getCacheEpoch()) {
+      this.existingNamesExpiresAt = Date.now() + DEFAULT_CACHE_TTL;
+      this.existingNamesEpoch = getCacheEpoch();
+      this.existingNamesPromise = this.httpClient.request<ApiContentType[]>({
+        method: 'GET',
+        path: '/contenttype?excludeElements=true',
+      })
+        .then((types) => types.map((ct) => decodeHtmlEntities(ct.alias || ct.name)))
+        .catch((error) => {
+          this.existingNamesPromise = null;
+          throw error;
+        });
+    }
+    return this.existingNamesPromise;
+  }
+
+  /**
+   * Returns `name` suffixed with ` (n)` when it collides with an existing content type.
+   *
+   * Runs after all other create() input has been validated, immediately before the
+   * POST, so invalid input never triggers the names lookup. The names fetch is
+   * intentionally not error-swallowed: if names can't be read, uniqueness can't be
+   * guaranteed. The suffixed name's length is re-validated only when suffixing
+   * changed the name.
+   */
+  private async resolveUniqueName(name: string): Promise<string> {
+    const existingNames = await this.getExistingNames();
+    const uniqueName = suffixNameForUniqueness(name, existingNames);
+    if (uniqueName !== name.trim()) {
+      await this.validationRules.assertContentTypeName(uniqueName);
+    }
+    return uniqueName;
   }
 
   /** Resolves listName for all fields that have a non-zero listId. */
@@ -1401,7 +1466,19 @@ export class ContentTypeResource {
     invalidateAllCaches();
   }
 
-  /** Creates a new content type. */
+  /**
+   * Creates a new content type.
+   *
+   * Matches the T4 UI: a name that collides with an existing content type is
+   * auto-suffixed with ` (n)` before sending. Existing names are decoded so the
+   * comparison is against friendly names, as the UI shows them, and come from
+   * the cached `getExistingNames()` so create does not issue a heavy list request
+   * every time. The raw name is length-validated first, so an over-length name
+   * fails before any list request (suffixing only lengthens a name). The
+   * suffixed name is validated again via
+   * `ValidationRules.assertContentTypeName`. The existing-names fetch is not
+   * error-swallowed: if names cannot be read, uniqueness cannot be guaranteed.
+   */
   async create(data: {
     name: string;
     description?: string;
@@ -1564,11 +1641,13 @@ export class ContentTypeResource {
       }
     }
 
+    const uniqueName = await this.resolveUniqueName(data.name);
+
     const raw = await this.httpClient.request<ApiContentType>({
       method: 'POST',
       path: '/contenttype',
       body: {
-        name: data.name,
+        name: uniqueName,
         description: data.description ?? '',
         type: 10,
         editable: true,
