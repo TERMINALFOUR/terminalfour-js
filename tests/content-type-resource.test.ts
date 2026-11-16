@@ -763,6 +763,7 @@ describe('ContentTypeResource', () => {
     (http.request as ReturnType<typeof vi.fn>).mockImplementation(async (opts: { method: string; path: string }) => {
       if (opts.path === '/type/') return ELEMENT_TYPES;
       if (opts.path === '/htmlEditor') return HTML_EDITORS;
+      if (opts.method === 'GET' && opts.path === '/layout/contenttype/88/en') return [{ id: 1, name: 'text/item' }];
       if (opts.method === 'GET' && opts.path === '/contenttype/343') return fullContentType;
       if (opts.method === 'PUT' && opts.path === '/contenttype/343') return undefined;
       throw new Error(`Unexpected: ${opts.method} ${opts.path}`);
@@ -1653,6 +1654,7 @@ describe('ContentTypeResource', () => {
     (http.request as ReturnType<typeof vi.fn>).mockImplementation(async (opts: { method: string; path: string }) => {
       if (opts.path === '/type/') return ELEMENT_TYPES;
       if (opts.path === '/htmlEditor') return HTML_EDITORS;
+      if (opts.method === 'GET' && opts.path === '/layout/contenttype/99/en') return [{ id: 1, name: 'text/slides' }];
       if (opts.method === 'GET' && opts.path === '/contenttype/343') return ctWithElements();
       if (opts.method === 'PUT' && opts.path === '/contenttype/343') return undefined;
       throw new Error(`Unexpected: ${opts.method} ${opts.path}`);
@@ -1693,10 +1695,11 @@ describe('ContentTypeResource', () => {
     });
   });
 
-  it('ContentType.addField() uses defaults for optional repeater config fields', async () => {
+  it('ContentType.addField() uses defaults for optional repeater min and max repeats', async () => {
     (http.request as ReturnType<typeof vi.fn>).mockImplementation(async (opts: { path: string }) => {
       if (opts.path === '/type/') return ELEMENT_TYPES;
       if (opts.path === '/htmlEditor') return HTML_EDITORS;
+      if (opts.path === '/layout/contenttype/55/en') return [{ id: 1, name: 'text/rows' }];
       if (opts.path === '/contenttype/343') return ctWithElements();
       throw new Error(`Unexpected: ${opts.path}`);
     });
@@ -1705,14 +1708,14 @@ describe('ContentTypeResource', () => {
     await ct.addField({
       name: 'Items',
       type: 'Repeater',
-      repeater: { contentTypeId: 55 },
+      repeater: { contentTypeId: 55, layout: 'text/rows' },
     });
 
     expect(ct.fields['Items'].config).toEqual({
       contentTypeId: 55,
       contentTypeName: '',
       contentTypeDescription: '',
-      layout: '',
+      layout: 'text/rows',
       minRepeats: 0,
       maxRepeats: 100,
     });
@@ -1750,6 +1753,7 @@ describe('ContentTypeResource', () => {
     (http.request as ReturnType<typeof vi.fn>).mockImplementation(async (opts: { method: string; path: string }) => {
       if (opts.path === '/type/') return ELEMENT_TYPES;
       if (opts.path === '/htmlEditor') return HTML_EDITORS;
+      if (opts.method === 'GET' && opts.path === '/layout/contenttype/77/en') return [{ id: 1, name: 'text/item' }];
       if (opts.method === 'GET' && opts.path === '/contenttype?excludeElements=true') return [];
       if (opts.method === 'POST' && opts.path === '/contenttype') return {
         id: 600, name: 'With Repeater', alias: 'With Repeater',
@@ -1786,10 +1790,11 @@ describe('ContentTypeResource', () => {
     });
   });
 
-  it('contentTypes.create() uses defaults for optional repeater config fields', async () => {
+  it('contentTypes.create() uses defaults for optional repeater min and max repeats', async () => {
     (http.request as ReturnType<typeof vi.fn>).mockImplementation(async (opts: { method: string; path: string }) => {
       if (opts.path === '/type/') return ELEMENT_TYPES;
       if (opts.path === '/htmlEditor') return HTML_EDITORS;
+      if (opts.method === 'GET' && opts.path === '/layout/contenttype/44/en') return [{ id: 1, name: 'text/rows' }];
       if (opts.method === 'GET' && opts.path === '/contenttype?excludeElements=true') return [];
       if (opts.method === 'POST' && opts.path === '/contenttype') return {
         id: 601, name: 'Test', alias: 'Test', contentTypeElements: [],
@@ -1800,7 +1805,7 @@ describe('ContentTypeResource', () => {
     await resource.create({
       name: 'Test',
       elements: [
-        { name: 'Rows', type: 'Repeater', repeater: { contentTypeId: 44 } },
+        { name: 'Rows', type: 'Repeater', repeater: { contentTypeId: 44, layout: 'text/rows' } },
       ],
     }, { wait: false });
 
@@ -1811,7 +1816,7 @@ describe('ContentTypeResource', () => {
     const repeaterEl = body.contentTypeElements.find((el) => el.name === 'Rows');
     expect(repeaterEl!.contentTypeElementConfiguration).toEqual({
       contentTypeId: 44,
-      layout: '',
+      layout: 'text/rows',
       minRepeats: 0,
       maxRepeats: 100,
       maxRepeatsLimit: 100,
@@ -2981,5 +2986,199 @@ describe('ContentTypeResource.create() name auto-suffix (#52)', () => {
     await resource.create({ name: 'B', elements: titleElement }, { wait: false });
 
     expect(counter.listCalls).toBe(2);
+  });
+});
+
+describe('Repeater layout validation', () => {
+  const HOST_TYPE_ID = 343;
+  const ITEM_TYPE_ID = 88;
+  const OTHER_ITEM_TYPE_ID = 89;
+  const ITEM_LAYOUT = 'text/item';
+  const CARD_LAYOUT = 'text/card';
+  const UNKNOWN_LAYOUT = 'text/missing';
+  const SPECIAL_CHARACTER_LAYOUT = `Bob's "layout" <b> & more`;
+  const LAYOUT_LIST_FAILURE = new Error('layout list unavailable');
+  const LAYOUT_LIST_PATH_PATTERN = /^\/layout\/contenttype\/(\d+)\/en$/;
+  const NAME_LOOKUP_PATH = '/contenttype?excludeElements=true';
+  const HOST_CONTENT_TYPE = {
+    id: HOST_TYPE_ID, name: 'Host', alias: 'Host', description: '',
+    minAuthLevel: 2, workflow: 0, enableDirectEdit: true, sharedGroups: [],
+    contentTypeElements: [
+      { id: 1, contentTypeID: HOST_TYPE_ID, name: 'Name', description: '', type: 1, maxSize: 80, compulsory: true, listId: 0, sequence: 1, alias: 'Name', shown: true },
+    ],
+  };
+
+  type RawLayoutList = Array<{ id: number; name: string }>;
+  type RecordedRequest = { method: string; path: string };
+
+  let http: HttpClient;
+  let resource: ContentTypeResource;
+
+  beforeEach(() => {
+    http = mockHttpClient();
+    resource = new ContentTypeResource(http);
+  });
+
+  function layoutsNamed(...names: string[]): RawLayoutList {
+    return names.map((name, index) => ({ id: index + 1, name }));
+  }
+
+  function mockEndpoints(layoutsByContentTypeId: Record<number, RawLayoutList | Error>) {
+    (http.request as ReturnType<typeof vi.fn>).mockImplementation(async (opts: RecordedRequest) => {
+      if (opts.path === '/type/') return ELEMENT_TYPES;
+      if (opts.path === '/htmlEditor') return HTML_EDITORS;
+      const layoutListMatch = LAYOUT_LIST_PATH_PATTERN.exec(opts.path);
+      if (layoutListMatch) {
+        const layouts = layoutsByContentTypeId[Number(layoutListMatch[1])] ?? [];
+        if (layouts instanceof Error) throw layouts;
+        return layouts;
+      }
+      if (opts.method === 'GET' && opts.path === `/contenttype/${HOST_TYPE_ID}`) return structuredClone(HOST_CONTENT_TYPE);
+      if (opts.method === 'PUT' && opts.path === `/contenttype/${HOST_TYPE_ID}`) return undefined;
+      if (opts.method === 'GET' && opts.path === NAME_LOOKUP_PATH) return [];
+      if (opts.method === 'POST' && opts.path === '/contenttype') {
+        return { id: 700, name: 'Created', alias: 'Created', contentTypeElements: [] };
+      }
+      throw new Error(`Unexpected: ${opts.method} ${opts.path}`);
+    });
+  }
+
+  const recordedRequests = (): RecordedRequest[] =>
+    (http.request as ReturnType<typeof vi.fn>).mock.calls.map((call: unknown[]) => call[0] as RecordedRequest);
+  const layoutLookups = () => recordedRequests().filter((r) => LAYOUT_LIST_PATH_PATTERN.test(r.path));
+  const writeRequests = () => recordedRequests().filter((r) => r.method === 'PUT' || r.method === 'POST');
+  const nameLookups = () => recordedRequests().filter((r) => r.path === NAME_LOOKUP_PATH);
+
+  const repeaterWithoutLayout = { contentTypeId: ITEM_TYPE_ID } as never;
+  const repeaterWithLayout = (layout: string, contentTypeId = ITEM_TYPE_ID) =>
+    ({ contentTypeId, layout, minRepeats: 0, maxRepeats: 5 }) as never;
+
+  type EntryPoint = [label: string, fieldKind: string, attempt: (repeater: never) => Promise<unknown>];
+  const entryPoints: EntryPoint[] = [
+    ['ContentType.addField()', 'Field', async (repeater) => {
+      const contentType = await resource.get(HOST_TYPE_ID);
+      await contentType.addField({ name: 'Slides', type: 'Repeater', repeater });
+    }],
+    ['contentTypes.update() addFields', 'Field', (repeater) =>
+      resource.update(HOST_TYPE_ID, { addFields: [{ name: 'Slides', type: 'Repeater', repeater }] }, { wait: false })],
+    ['contentTypes.create()', 'Element', (repeater) =>
+      resource.create({ name: 'Created', elements: [{ name: 'Slides', type: 'Repeater', repeater }] }, { wait: false })],
+  ];
+
+  describe.each(entryPoints)('%s', (_label, fieldKind, attempt) => {
+    it.each(['', '   '])('throws before any lookup or write when the layout is %j', async (blankLayout) => {
+      mockEndpoints({});
+
+      await expect(attempt(repeaterWithLayout(blankLayout)))
+        .rejects.toThrow(`${fieldKind} "Slides" is a Repeater and requires repeater.layout`);
+
+      expect(layoutLookups()).toHaveLength(0);
+      expect(writeRequests()).toHaveLength(0);
+    });
+
+    it('throws before any lookup or write when the layout is omitted', async () => {
+      mockEndpoints({});
+
+      await expect(attempt(repeaterWithoutLayout))
+        .rejects.toThrow(`${fieldKind} "Slides" is a Repeater and requires repeater.layout`);
+
+      expect(layoutLookups()).toHaveLength(0);
+      expect(writeRequests()).toHaveLength(0);
+    });
+
+    it('throws and lists the valid layouts when the layout is not one of the repeater content type layouts', async () => {
+      mockEndpoints({ [ITEM_TYPE_ID]: layoutsNamed(ITEM_LAYOUT, CARD_LAYOUT) });
+
+      await expect(attempt(repeaterWithLayout(UNKNOWN_LAYOUT))).rejects.toThrow(
+        `Layout "${UNKNOWN_LAYOUT}" not found on content type ${ITEM_TYPE_ID}. Valid layouts: ${ITEM_LAYOUT}, ${CARD_LAYOUT}`,
+      );
+
+      expect(writeRequests()).toHaveLength(0);
+    });
+
+    it('matches layout names case-sensitively', async () => {
+      mockEndpoints({ [ITEM_TYPE_ID]: layoutsNamed(ITEM_LAYOUT) });
+
+      await expect(attempt(repeaterWithLayout('Text/Item'))).rejects.toThrow('not found on content type');
+    });
+
+    it('says the repeater content type has no layouts when its layout list is empty', async () => {
+      mockEndpoints({ [ITEM_TYPE_ID]: layoutsNamed() });
+
+      await expect(attempt(repeaterWithLayout(ITEM_LAYOUT)))
+        .rejects.toThrow(`Content type ${ITEM_TYPE_ID} has no layouts`);
+
+      expect(writeRequests()).toHaveLength(0);
+    });
+
+    it('accepts a layout that exists on the repeater content type with one lookup', async () => {
+      mockEndpoints({ [ITEM_TYPE_ID]: layoutsNamed(ITEM_LAYOUT, CARD_LAYOUT) });
+
+      await expect(attempt(repeaterWithLayout(CARD_LAYOUT))).resolves.not.toThrow();
+
+      expect(layoutLookups()).toEqual([{ method: 'GET', path: `/layout/contenttype/${ITEM_TYPE_ID}/en` }]);
+    });
+
+    it('accepts a layout name containing quotes, angle brackets and ampersands', async () => {
+      mockEndpoints({ [ITEM_TYPE_ID]: layoutsNamed(SPECIAL_CHARACTER_LAYOUT) });
+
+      await expect(attempt(repeaterWithLayout(SPECIAL_CHARACTER_LAYOUT))).resolves.not.toThrow();
+    });
+
+    it('surfaces a failed layout lookup with the original error as the cause and writes nothing', async () => {
+      mockEndpoints({ [ITEM_TYPE_ID]: LAYOUT_LIST_FAILURE });
+
+      const error = await attempt(repeaterWithLayout(ITEM_LAYOUT)).catch((caught: Error) => caught);
+
+      expect((error as Error).message).toBe(
+        `Could not read the layouts of content type ${ITEM_TYPE_ID} to validate the Repeater layout for field "Slides"`,
+      );
+      expect((error as Error).cause).toBe(LAYOUT_LIST_FAILURE);
+      expect(writeRequests()).toHaveLength(0);
+    });
+  });
+
+  describe('contentTypes.create() with several repeater elements', () => {
+    const createWithRepeaters = (elements: Array<{ name: string; repeater: never }>) =>
+      resource.create(
+        { name: 'Created', elements: elements.map((element) => ({ ...element, type: 'Repeater' })) },
+        { wait: false },
+      );
+
+    it('looks up each repeater content type once even when several elements share it', async () => {
+      mockEndpoints({ [ITEM_TYPE_ID]: layoutsNamed(ITEM_LAYOUT, CARD_LAYOUT), [OTHER_ITEM_TYPE_ID]: layoutsNamed(CARD_LAYOUT) });
+
+      await createWithRepeaters([
+        { name: 'Slides', repeater: repeaterWithLayout(ITEM_LAYOUT) },
+        { name: 'Highlights', repeater: repeaterWithLayout(CARD_LAYOUT) },
+        { name: 'Cards', repeater: repeaterWithLayout(CARD_LAYOUT, OTHER_ITEM_TYPE_ID) },
+      ]);
+
+      expect(layoutLookups().map((request) => request.path).sort()).toEqual([
+        `/layout/contenttype/${ITEM_TYPE_ID}/en`,
+        `/layout/contenttype/${OTHER_ITEM_TYPE_ID}/en`,
+      ]);
+    });
+
+    it('reports the element whose layout is invalid and writes nothing', async () => {
+      mockEndpoints({ [ITEM_TYPE_ID]: layoutsNamed(ITEM_LAYOUT), [OTHER_ITEM_TYPE_ID]: layoutsNamed(CARD_LAYOUT) });
+
+      await expect(createWithRepeaters([
+        { name: 'Slides', repeater: repeaterWithLayout(ITEM_LAYOUT) },
+        { name: 'Cards', repeater: repeaterWithLayout(UNKNOWN_LAYOUT, OTHER_ITEM_TYPE_ID) },
+      ])).rejects.toThrow(`Layout "${UNKNOWN_LAYOUT}" not found on content type ${OTHER_ITEM_TYPE_ID}`);
+
+      expect(writeRequests()).toHaveLength(0);
+    });
+
+    it('does not look up existing content type names when a layout is invalid', async () => {
+      mockEndpoints({ [ITEM_TYPE_ID]: layoutsNamed(ITEM_LAYOUT) });
+
+      await expect(createWithRepeaters([
+        { name: 'Slides', repeater: repeaterWithLayout(UNKNOWN_LAYOUT) },
+      ])).rejects.toThrow('not found on content type');
+
+      expect(nameLookups()).toHaveLength(0);
+    });
   });
 });
