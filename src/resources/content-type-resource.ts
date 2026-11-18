@@ -381,32 +381,36 @@ async function readLayoutNames(httpClient: HttpClient, contentTypeId: number, fi
 }
 
 /**
+ * Throws unless the layout is one of the layouts of the content type it points
+ * at, listing the valid layouts when it is not. Names are compared exactly.
+ */
+function assertLayoutIsOneOf(repeater: RepeaterConfig, validNames: string[]): void {
+  if (validNames.includes(repeater.layout)) return;
+  if (validNames.length === 0) {
+    throw new Error(`Content type ${repeater.contentTypeId} has no layouts`);
+  }
+  throw new Error(
+    `Layout "${repeater.layout}" not found on content type ${repeater.contentTypeId}. Valid layouts: ${validNames.join(', ')}`,
+  );
+}
+
+/**
  * Throws unless every Repeater layout is one of the layouts of the content type
- * it points at, listing the valid layouts when it is not. Names are compared
- * exactly. Each repeater content type is read once per call, and nothing is
- * cached because layouts can change between calls.
+ * it points at. Each repeater content type is read once per call and the reads
+ * run in parallel. Nothing is cached because layouts can change between calls.
  */
 async function assertRepeaterLayoutsExist(httpClient: HttpClient, checks: RepeaterLayoutCheck[]): Promise<void> {
-  const layoutNamesByContentType = new Map<number, string[]>();
-  const firstCheckByContentType = new Map<number, RepeaterLayoutCheck>();
-  for (const check of checks) {
-    if (!firstCheckByContentType.has(check.repeater.contentTypeId)) {
-      firstCheckByContentType.set(check.repeater.contentTypeId, check);
+  const lookups = new Map<number, Promise<string[]>>();
+  const lookupFor = ({ fieldName, repeater }: RepeaterLayoutCheck): Promise<string[]> => {
+    let lookup = lookups.get(repeater.contentTypeId);
+    if (!lookup) {
+      lookup = readLayoutNames(httpClient, repeater.contentTypeId, fieldName);
+      lookups.set(repeater.contentTypeId, lookup);
     }
-  }
-  await Promise.all(Array.from(firstCheckByContentType.entries()).map(async ([contentTypeId, check]) => {
-    layoutNamesByContentType.set(contentTypeId, await readLayoutNames(httpClient, contentTypeId, check.fieldName));
-  }));
-  for (const { repeater } of checks) {
-    const validNames = layoutNamesByContentType.get(repeater.contentTypeId) ?? [];
-    if (validNames.includes(repeater.layout)) continue;
-    if (validNames.length === 0) {
-      throw new Error(`Content type ${repeater.contentTypeId} has no layouts`);
-    }
-    throw new Error(
-      `Layout "${repeater.layout}" not found on content type ${repeater.contentTypeId}. Valid layouts: ${validNames.join(', ')}`,
-    );
-  }
+    return lookup;
+  };
+  const validNamesPerCheck = await Promise.all(checks.map(lookupFor));
+  checks.forEach(({ repeater }, index) => assertLayoutIsOneOf(repeater, validNamesPerCheck[index]));
 }
 
 /** Extracts a value from raw elements by element name prefix (case-insensitive). */
