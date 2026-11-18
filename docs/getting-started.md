@@ -114,7 +114,7 @@ Other resources use fixed languages:
 Every request the SDK makes carries a `User-Agent` header identifying the SDK and its version, so your T4 instance's access logs can distinguish SDK traffic from other API consumers and attribute it to a specific SDK release:
 
 ```
-User-Agent: Terminalfour-JS-SDK/1.2.0
+User-Agent: Terminalfour-JS-SDK/1.3.0
 ```
 
 The version is baked in from the SDK's `package.json` when the package is built, so it always matches the installed release — nothing to update by hand, and it stays correct even when the SDK is bundled into your application.
