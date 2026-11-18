@@ -16,6 +16,7 @@ export { MediaItem } from './models/media-item.js';
 export type { MediaFileInput } from './models/media-item.js';
 export { ContentType } from './resources/content-type-resource.js';
 export { Layout } from './resources/content-type-resource.js';
+export type { RepeaterConfig } from './resources/content-type-resource.js';
 export type { ListSummary, ListItemData } from './resources/list-resource.js';
 export { List } from './resources/list-resource.js';
 export type { GroupData, GroupMember } from './resources/group-resource.js';

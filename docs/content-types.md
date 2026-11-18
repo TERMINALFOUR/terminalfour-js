@@ -160,7 +160,7 @@ await t4.contentTypes.create({
 
 ### Repeater fields
 
-A Repeater requires the sub-content type that defines its fields:
+A Repeater requires the sub-content type that defines its fields and one of that content type's layouts:
 
 ```typescript
 await t4.contentTypes.create({
@@ -172,7 +172,7 @@ await t4.contentTypes.create({
       type: 'Repeater',
       repeater: {
         contentTypeId: 99,      // required: content type that defines repeater fields
-        layout: 'text/slides',  // optional; default: ''
+        layout: 'text/slides',  // required: a layout of the content type above
         minRepeats: 1,          // optional; default: 0
         maxRepeats: 10,         // optional; default: 100
       },
@@ -180,6 +180,19 @@ await t4.contentTypes.create({
   ],
 });
 ```
+
+`layout` is required, and it must be the name of a layout that exists on the content type given by `contentTypeId` (not on the content type you are editing). The SDK checks this before it sends anything, for `create()`, `update({ addFields })` and `addField()`, so a missing or wrong layout fails with an error that lists the valid choices:
+
+```typescript
+await contentType.addField({
+  name: 'Slides',
+  type: 'Repeater',
+  repeater: { contentTypeId: 99, layout: 'text/missing' },
+});
+// Error: Layout "text/missing" not found on content type 99. Valid layouts: text/slides, text/cards
+```
+
+Layout names are matched exactly, including case. A missing or blank layout throws `Field "Slides" is a Repeater and requires repeater.layout` (`Element "Slides"` for `create()`). If the layouts of the repeater content type cannot be read, the SDK throws instead of skipping the check, with the original error as `cause`.
 
 ### HTML editors
 

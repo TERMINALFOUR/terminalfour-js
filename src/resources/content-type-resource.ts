@@ -320,6 +320,99 @@ interface RawLayout {
   [key: string]: unknown;
 }
 
+/**
+ * Configuration of a Repeater element: the content type that supplies the
+ * repeated items and the layout used to render them.
+ */
+export interface RepeaterConfig {
+  /** The content type ID that defines the repeater's fields */
+  contentTypeId: number;
+  /**
+   * Name of a content layout of the repeater content type (e.g. 'text/html').
+   * Required: Terminalfour rejects a Repeater whose layout is missing or is not
+   * one of that content type's layouts.
+   */
+  layout: string;
+  /** Minimum number of repeater instances. Defaults to 0. */
+  minRepeats?: number;
+  /** Maximum number of repeater instances. Defaults to 100. */
+  maxRepeats?: number;
+}
+
+/** A Repeater element whose layout still has to be checked against its content type. */
+interface RepeaterLayoutCheck {
+  fieldName: string;
+  repeater: RepeaterConfig;
+}
+
+/** Lists the raw content layouts of a content type. */
+function fetchContentTypeLayouts(httpClient: HttpClient, contentTypeId: number): Promise<RawLayout[]> {
+  return httpClient.request<RawLayout[]>({
+    method: 'GET',
+    path: `/layout/contenttype/${contentTypeId}/en`,
+  });
+}
+
+/**
+ * Throws unless the Repeater has a non-blank layout, so an empty layout is never
+ * sent to Terminalfour. Also covers JavaScript callers, where the type cannot.
+ */
+function assertRepeaterLayoutProvided(fieldKind: 'Field' | 'Element', fieldName: string, repeater: RepeaterConfig): void {
+  if (!repeater.layout?.trim()) {
+    throw new Error(`${fieldKind} "${fieldName}" is a Repeater and requires repeater.layout`);
+  }
+}
+
+/**
+ * Reads the layout names of a content type. A failed read is surfaced with the
+ * original error as `cause` instead of skipping the check, because without the
+ * list the layout cannot be validated.
+ */
+async function readLayoutNames(httpClient: HttpClient, contentTypeId: number, fieldName: string): Promise<string[]> {
+  try {
+    const layouts = await fetchContentTypeLayouts(httpClient, contentTypeId);
+    return layouts.map((layout) => layout.name);
+  } catch (cause) {
+    throw new Error(
+      `Could not read the layouts of content type ${contentTypeId} to validate the Repeater layout for field "${fieldName}"`,
+      { cause },
+    );
+  }
+}
+
+/**
+ * Throws unless the layout is one of the layouts of the content type it points
+ * at, listing the valid layouts when it is not. Names are compared exactly.
+ */
+function assertLayoutIsOneOf(repeater: RepeaterConfig, validNames: string[]): void {
+  if (validNames.includes(repeater.layout)) return;
+  if (validNames.length === 0) {
+    throw new Error(`Content type ${repeater.contentTypeId} has no layouts`);
+  }
+  throw new Error(
+    `Layout "${repeater.layout}" not found on content type ${repeater.contentTypeId}. Valid layouts: ${validNames.join(', ')}`,
+  );
+}
+
+/**
+ * Throws unless every Repeater layout is one of the layouts of the content type
+ * it points at. Each repeater content type is read once per call and the reads
+ * run in parallel. Nothing is cached because layouts can change between calls.
+ */
+async function assertRepeaterLayoutsExist(httpClient: HttpClient, checks: RepeaterLayoutCheck[]): Promise<void> {
+  const lookups = new Map<number, Promise<string[]>>();
+  const lookupFor = ({ fieldName, repeater }: RepeaterLayoutCheck): Promise<string[]> => {
+    let lookup = lookups.get(repeater.contentTypeId);
+    if (!lookup) {
+      lookup = readLayoutNames(httpClient, repeater.contentTypeId, fieldName);
+      lookups.set(repeater.contentTypeId, lookup);
+    }
+    return lookup;
+  };
+  const validNamesPerCheck = await Promise.all(checks.map(lookupFor));
+  checks.forEach(({ repeater }, index) => assertLayoutIsOneOf(repeater, validNamesPerCheck[index]));
+}
+
 /** Extracts a value from raw elements by element name prefix (case-insensitive). */
 function getElementValue(elements: Record<string, unknown>, name: string): string {
   const key = Object.keys(elements).find((k) => k.toLowerCase().startsWith(name.toLowerCase() + '#'));
@@ -476,12 +569,7 @@ export class ContentType implements ContentTypeData {
     let layoutElementsCache: LayoutElement[] | null = null;
     let layoutContentTypeIdCache: number | null = null;
 
-    const fetchLayouts = async (): Promise<RawLayout[]> => {
-      return httpClient.request<RawLayout[]>({
-        method: 'GET',
-        path: `/layout/contenttype/${contentTypeId}/en`,
-      });
-    };
+    const fetchLayouts = (): Promise<RawLayout[]> => fetchContentTypeLayouts(httpClient, contentTypeId);
 
     /** Resolves the layout content type ID by looking up "Content Layout" (type 30). */
     const getLayoutContentTypeId = async (): Promise<number> => {
@@ -728,16 +816,7 @@ export class ContentType implements ContentTypeData {
     /** HTML editor name — only valid for HTML elements. Use the editor name (e.g. 'TinyMCE', 'Standard Textarea'). */
     editor?: string;
     /** Repeater configuration — required when type is 'Repeater' */
-    repeater?: {
-      /** The content type ID that defines the repeater's fields */
-      contentTypeId: number;
-      /** The content layout name to use for the repeater (e.g. 'text/html') */
-      layout?: string;
-      /** Minimum number of repeater instances. Defaults to 0. */
-      minRepeats?: number;
-      /** Maximum number of repeater instances. Defaults to 100. */
-      maxRepeats?: number;
-    };
+    repeater?: RepeaterConfig;
   }): Promise<void> {
     if (!data.name?.trim()) throw new Error('Field name is required');
     if (!data.type?.trim()) throw new Error('Field type is required');
@@ -769,6 +848,9 @@ export class ContentType implements ContentTypeData {
     if (!isRepeater && data.repeater) {
       throw new Error(`Field "${data.name}" is type "${data.type}" — repeater configuration is only valid for Repeater elements`);
     }
+    if (isRepeater && data.repeater) {
+      assertRepeaterLayoutProvided('Field', data.name, data.repeater);
+    }
 
     // Validate editor option (only valid for HTML elements)
     const isHtml = typeMatch.name === 'HTML';
@@ -787,6 +869,10 @@ export class ContentType implements ContentTypeData {
         throw new Error(`Unknown editor "${data.editor}". Valid options: ${valid}`);
       }
       resolvedEditorId = match.id;
+    }
+
+    if (isRepeater && data.repeater) {
+      await assertRepeaterLayoutsExist(this._httpClient, [{ fieldName: data.name, repeater: data.repeater }]);
     }
 
     // Generate a negative random ID for the new element (API convention for new items)
@@ -818,7 +904,7 @@ export class ContentType implements ContentTypeData {
       const maxRepeats = data.repeater.maxRepeats ?? 100;
       newRawElement.contentTypeElementConfiguration = {
         contentTypeId: data.repeater.contentTypeId,
-        layout: data.repeater.layout ?? '',
+        layout: data.repeater.layout,
         minRepeats: data.repeater.minRepeats ?? 0,
         maxRepeats: maxRepeats,
         maxRepeatsLimit: maxRepeats,
@@ -852,7 +938,7 @@ export class ContentType implements ContentTypeData {
         contentTypeId: data.repeater.contentTypeId,
         contentTypeName: '',
         contentTypeDescription: '',
-        layout: data.repeater.layout ?? '',
+        layout: data.repeater.layout,
         minRepeats: data.repeater.minRepeats ?? 0,
         maxRepeats: data.repeater.maxRepeats ?? 100,
       };
@@ -1366,12 +1452,7 @@ export class ContentTypeResource {
       shown?: boolean;
       listId?: number;
       editor?: string;
-      repeater?: {
-        contentTypeId: number;
-        layout?: string;
-        minRepeats?: number;
-        maxRepeats?: number;
-      };
+      repeater?: RepeaterConfig;
     }>;
     /**
      * Existing fields to modify, matched by `name`. Only the provided
@@ -1495,16 +1576,7 @@ export class ContentTypeResource {
       /** HTML editor name — only valid for HTML elements. */
       editor?: string;
       /** Repeater configuration — required when type is 'Repeater' */
-      repeater?: {
-        /** The content type ID that defines the repeater's fields */
-        contentTypeId: number;
-        /** The content layout name to use for the repeater (e.g. 'text/html') */
-        layout?: string;
-        /** Minimum number of repeater instances. Defaults to 0. */
-        minRepeats?: number;
-        /** Maximum number of repeater instances. Defaults to 100. */
-        maxRepeats?: number;
-      };
+      repeater?: RepeaterConfig;
     }>;
     minUserLevel?: string;
     workflow?: number;
@@ -1562,6 +1634,7 @@ export class ContentTypeResource {
     // Default: Name element is used for filename
     let elementIdForFilename = 1;
     let editorMapForCreate: Map<string, { id: number; name: string }> | null = null;
+    const repeaterLayoutChecks: RepeaterLayoutCheck[] = [];
 
     for (let i = 0; i < data.elements.length; i++) {
       const el = data.elements[i];
@@ -1583,6 +1656,10 @@ export class ContentTypeResource {
       }
       if (!isRepeater && el.repeater) {
         throw new Error(`Element "${el.name}" is type "${el.type}" — repeater configuration is only valid for Repeater elements`);
+      }
+      if (isRepeater && el.repeater) {
+        assertRepeaterLayoutProvided('Element', el.name, el.repeater);
+        repeaterLayoutChecks.push({ fieldName: el.name, repeater: el.repeater });
       }
 
       // Validate editor option (only valid for HTML elements)
@@ -1610,7 +1687,7 @@ export class ContentTypeResource {
         const maxRepeats = el.repeater.maxRepeats ?? 100;
         elDef.contentTypeElementConfiguration = {
           contentTypeId: el.repeater.contentTypeId,
-          layout: el.repeater.layout ?? '',
+          layout: el.repeater.layout,
           minRepeats: el.repeater.minRepeats ?? 0,
           maxRepeats: maxRepeats,
           maxRepeatsLimit: maxRepeats,
@@ -1641,6 +1718,7 @@ export class ContentTypeResource {
       }
     }
 
+    await assertRepeaterLayoutsExist(this.httpClient, repeaterLayoutChecks);
     const uniqueName = await this.resolveUniqueName(data.name);
 
     const raw = await this.httpClient.request<ApiContentType>({
