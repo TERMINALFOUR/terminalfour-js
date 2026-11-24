@@ -10,6 +10,7 @@ import {
   copyFileSync,
 } from 'node:fs';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { buildUserAgent, SDK_PRODUCT, UNKNOWN_VERSION } from '../src/version.js';
 
 describe('buildUserAgent', () => {
@@ -79,7 +80,9 @@ describe('getSdkVersion', () => {
 
 describe('generate-version script', () => {
   const created: string[] = [];
-  const scriptPath = new URL('../scripts/generate-version.mjs', import.meta.url).pathname;
+  // fileURLToPath, not .pathname: on Windows the pathname is "/C:/..." and
+  // joining or copying from it resolves to "C:\C:\...".
+  const scriptPath = fileURLToPath(new URL('../scripts/generate-version.mjs', import.meta.url));
 
   afterEach(() => {
     for (const dir of created.splice(0)) {
