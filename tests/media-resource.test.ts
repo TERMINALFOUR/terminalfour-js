@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { MediaResource } from '../src/resources/media-resource.js';
 import { MediaItem } from '../src/models/media-item.js';
 import { HttpClient } from '../src/http-client.js';
+import { invalidateAllCaches } from '../src/utils.js';
 
 function mockHttpClient() {
   return { request: vi.fn() } as unknown as HttpClient;
@@ -797,6 +798,70 @@ describe('MediaResource', () => {
       );
       const fd = (postCall![0] as { formData: FormData }).formData;
       expect(fd.get('syntaxType')).toBe('0');
+    });
+  });
+
+  describe('media types cache', () => {
+    type RecordedCall = {
+      method: string;
+      path: string;
+      body?: Record<string, unknown>;
+    };
+
+    const RESPONSE_DELAY_MS = 20;
+    const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+    const nth = <T>(responses: T[], n: number): T =>
+      responses[Math.min(n, responses.length - 1)];
+    const fetchesOf = (calls: RecordedCall[], path: string) =>
+      calls.filter((c) => c.path === path);
+
+    const MEDIA_TYPES_V2 = mediaTypes.map((t) => (t.id === 1 ? { ...t, name: 'Picture' } : t));
+
+    // typeName is removed so get() resolves the name from the /mediaType lookup.
+    const rawMediaWithoutTypeName = { ...rawMediaResponse, typeName: undefined };
+
+    function mockMediaGet(mediaTypeResponses: unknown[], delayMs = 0): RecordedCall[] {
+      const calls: RecordedCall[] = [];
+      let mediaTypeFetches = 0;
+      (http.request as ReturnType<typeof vi.fn>).mockImplementation(
+        async (opts: { method: string; path: string; body?: Record<string, unknown> }) => {
+          calls.push({ method: opts.method, path: opts.path, body: opts.body });
+          if (opts.path === '/media/10928/smxx') return rawMediaWithoutTypeName;
+          if (opts.path === '/mediaType') {
+            const response = nth(mediaTypeResponses, mediaTypeFetches++);
+            if (delayMs > 0) await delay(delayMs);
+            return response;
+          }
+          throw new Error(`Unexpected: ${opts.method} ${opts.path}`);
+        },
+      );
+      return calls;
+    }
+
+    beforeEach(() => {
+      invalidateAllCaches();
+    });
+
+    it('re-fetches GET /mediaType after invalidateAllCaches()', async () => {
+      const calls = mockMediaGet([mediaTypes, MEDIA_TYPES_V2]);
+
+      const first = await resource.get(10928);
+      invalidateAllCaches();
+      const second = await resource.get(10928);
+
+      expect(first.mediaType).toBe('Image');
+      expect(second.mediaType).toBe('Picture');
+      expect(fetchesOf(calls, '/mediaType')).toHaveLength(2);
+    });
+
+    it('shares one in-flight GET /mediaType across concurrent get() calls', async () => {
+      const calls = mockMediaGet([mediaTypes, MEDIA_TYPES_V2], RESPONSE_DELAY_MS);
+
+      const [a, b] = await Promise.all([resource.get(10928), resource.get(10928)]);
+
+      expect(fetchesOf(calls, '/mediaType')).toHaveLength(1);
+      expect(a.mediaType).toBe('Image');
+      expect(b.mediaType).toBe('Image');
     });
   });
 });

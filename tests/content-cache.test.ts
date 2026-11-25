@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { T4Client } from '../src/t4-client.js';
 import { HttpClient } from '../src/http-client.js';
 import { ELEMENT_TYPES } from './helpers.js';
+import { invalidateAllCaches } from '../src/utils.js';
 
 /**
  * Regression tests for cache sharing across sections.
@@ -161,5 +162,64 @@ describe('content cache sharing across sections', () => {
     await client.section(2778).content.get(8732);
 
     expect(countCalls((p) => p === '/contenttype/71')).toBe(afterUpdate + 1);
+  });
+
+  describe('clearCache() across caches', () => {
+    const TYPE_PATH = '/type/';
+    const META_PATH = '/meta';
+    const MEDIA_ROOT_PATH = '/config/mediaLibrary.section';
+    const HELPERS_SECTION_ID_PATH = '/config/handlebars.helpersSectionId';
+
+    beforeEach(() => {
+      invalidateAllCaches();
+      (http.request as unknown) = vi.fn(async (opts: { method: string; path: string }) => {
+        const { method, path } = opts;
+        if (method === 'GET' && path === TYPE_PATH) return ELEMENT_TYPES;
+        if (method === 'GET' && path === '/contenttype/71') return contentTypeDef;
+        if (method === 'GET' && /^\/content\/type\/71\/\d+$/.test(path)) return sectionTemplate;
+        const cMatch = path.match(/^\/content\/(\d+)\/(\d+)\/en$/);
+        if (method === 'GET' && cMatch) return contentDTO(Number(cMatch[1]), Number(cMatch[2]));
+        if (method === 'GET' && path === '/hierarchy/233/en') {
+          return { id: 233, name: 'Home', parent: 100, metaDatas: [{ id: 19, value: 'T', lang: 'en' }] };
+        }
+        if (method === 'GET' && path === META_PATH) return [{ id: 19, name: 'og:title' }];
+        if (method === 'GET' && path === MEDIA_ROOT_PATH) {
+          return { name: 'mediaLibrary.section', type: 'section', value: '2' };
+        }
+        if (method === 'GET' && path === '/hierarchy/2/en/subsections?showAll=false&removeNonTranslated=false') {
+          return { children: [] };
+        }
+        if (method === 'POST' && path === HELPERS_SECTION_ID_PATH) {
+          return { options: [{ name: 'handlebars.helpersSectionId', type: 'integer', value: '7777' }] };
+        }
+        if (method === 'GET' && path === '/hierarchy/7777/en/contents?showAll=false&removeNonTranslated=false') {
+          return { children: [], sortType: 0 };
+        }
+        throw new Error(`Unexpected: ${method} ${path}`);
+      });
+    });
+
+    const expectTargetCounts = (expected: number) => {
+      expect(countCalls((p) => p === TYPE_PATH)).toBe(expected);
+      expect(countCalls((p) => p === META_PATH)).toBe(expected);
+      expect(countCalls((p) => p === MEDIA_ROOT_PATH)).toBe(expected);
+      expect(countCalls((p) => p === HELPERS_SECTION_ID_PATH)).toBe(expected);
+    };
+
+    it('clearCache() forces a re-fetch for every primed cache', async () => {
+      await client.section(2777).content.get(8730);
+      expect(await client.section(233).metaDatas()).toEqual({ 'og:title': 'T' });
+      expect(await client.mediaLibrary.tree()).toEqual({ id: 2, name: 'Media Library' });
+      expect(await client.handlebars.helpers.list()).toEqual([]);
+      expectTargetCounts(1);
+
+      client.clearCache();
+
+      await client.section(2778).content.get(8732);
+      await client.section(233).metaDatas();
+      await client.mediaLibrary.tree();
+      await client.handlebars.helpers.list();
+      expectTargetCounts(2);
+    });
   });
 });

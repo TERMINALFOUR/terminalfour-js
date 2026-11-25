@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { ContentTypeResource, ValidationRules } from '../src/resources/content-type-resource.js';
 import { HttpClient } from '../src/http-client.js';
-import { getCacheEpoch } from '../src/utils.js';
+import { getCacheEpoch, invalidateAllCaches } from '../src/utils.js';
 import { ELEMENT_TYPES, HTML_EDITORS } from './helpers.js';
 
 function mockHttpClient() {
@@ -2756,6 +2756,108 @@ describe('ValidationRules', () => {
       await expect(
         rules.assertContentType({ name: 'n'.repeat(5000) }, [{ name: 'e'.repeat(5000) }]),
       ).resolves.toBeUndefined();
+    });
+  });
+
+  describe('cache invalidation and in-flight dedupe', () => {
+    type RecordedCall = { method: string; path: string; body?: Record<string, unknown> };
+
+    const RESPONSE_DELAY_MS = 20;
+    const CONTENT_TYPE_PATH = '/validationrule/contenttype';
+    const TEMPLATE_ELEMENT_PATH = '/validationrule/templateElement';
+    const CONTENT_TYPE_RULES_V2 = {
+      name: [{ msgTemplate: 'maxLength', maxLength: 150 }],
+      description: [{ msgTemplate: 'maxLength', maxLength: 200 }],
+    };
+    const TEMPLATE_ELEMENT_RULES_V2 = {
+      name: [{ msgTemplate: 'maxLength', maxLength: 75 }],
+      description: [{ msgTemplate: 'maxLength', maxLength: 200 }],
+    };
+
+    const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+    /** Call 1 gets responses[0], call 2 gets responses[1], later calls repeat the last entry. */
+    const nth = <T>(responses: T[], n: number): T => responses[Math.min(n, responses.length - 1)];
+
+    const fetchesOf = (calls: RecordedCall[], path: string) => calls.filter((c) => c.path === path);
+
+    /**
+     * Serves both rule endpoints from per-path response sequences, records every
+     * request, and delays the rule responses by `delayMs` when set.
+     */
+    const mockRuleEndpoints = (
+      contentTypeResponses: unknown[],
+      elementResponses: unknown[],
+      delayMs = 0,
+    ): RecordedCall[] => {
+      const calls: RecordedCall[] = [];
+      const responsesByPath: Record<string, unknown[]> = {
+        [CONTENT_TYPE_PATH]: contentTypeResponses,
+        [TEMPLATE_ELEMENT_PATH]: elementResponses,
+      };
+      (http.request as ReturnType<typeof vi.fn>).mockImplementation(async (opts: RecordedCall) => {
+        const callIndex = fetchesOf(calls, opts.path).length;
+        calls.push({ method: opts.method, path: opts.path, body: opts.body });
+        const responses = responsesByPath[opts.path];
+        if (opts.method !== 'GET' || !responses) throw new Error(`Unexpected: ${opts.method} ${opts.path}`);
+        if (delayMs > 0) await delay(delayMs);
+        return nth(responses, callIndex);
+      });
+      return calls;
+    };
+
+    beforeEach(() => {
+      invalidateAllCaches();
+    });
+
+    it('re-fetches GET /validationrule/contenttype after invalidateAllCaches()', async () => {
+      const calls = mockRuleEndpoints([CONTENT_TYPE_RULES, CONTENT_TYPE_RULES_V2], [TEMPLATE_ELEMENT_RULES]);
+
+      expect(await rules.contentType()).toEqual(CONTENT_TYPE_RULES);
+      invalidateAllCaches();
+      const refetched = await rules.contentType();
+
+      expect(refetched).toEqual(CONTENT_TYPE_RULES_V2);
+      expect(fetchesOf(calls, CONTENT_TYPE_PATH)).toHaveLength(2);
+    });
+
+    it('re-fetches GET /validationrule/templateElement after invalidateAllCaches()', async () => {
+      const calls = mockRuleEndpoints([CONTENT_TYPE_RULES], [TEMPLATE_ELEMENT_RULES, TEMPLATE_ELEMENT_RULES_V2]);
+
+      expect(await rules.templateElement()).toEqual(TEMPLATE_ELEMENT_RULES);
+      invalidateAllCaches();
+      const refetched = await rules.templateElement();
+
+      expect(refetched).toEqual(TEMPLATE_ELEMENT_RULES_V2);
+      expect(fetchesOf(calls, TEMPLATE_ELEMENT_PATH)).toHaveLength(2);
+    });
+
+    it('shares one in-flight GET /validationrule/contenttype across concurrent callers', async () => {
+      const calls = mockRuleEndpoints(
+        [CONTENT_TYPE_RULES, CONTENT_TYPE_RULES_V2],
+        [TEMPLATE_ELEMENT_RULES],
+        RESPONSE_DELAY_MS,
+      );
+
+      const [first, second] = await Promise.all([rules.contentType(), rules.contentType()]);
+
+      expect(fetchesOf(calls, CONTENT_TYPE_PATH)).toHaveLength(1);
+      expect(first).toEqual(CONTENT_TYPE_RULES);
+      expect(second).toEqual(CONTENT_TYPE_RULES);
+    });
+
+    it('shares one in-flight GET /validationrule/templateElement across concurrent callers', async () => {
+      const calls = mockRuleEndpoints(
+        [CONTENT_TYPE_RULES],
+        [TEMPLATE_ELEMENT_RULES, TEMPLATE_ELEMENT_RULES_V2],
+        RESPONSE_DELAY_MS,
+      );
+
+      const [first, second] = await Promise.all([rules.templateElement(), rules.templateElement()]);
+
+      expect(fetchesOf(calls, TEMPLATE_ELEMENT_PATH)).toHaveLength(1);
+      expect(first).toEqual(TEMPLATE_ELEMENT_RULES);
+      expect(second).toEqual(TEMPLATE_ELEMENT_RULES);
     });
   });
 });

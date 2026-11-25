@@ -5,7 +5,7 @@ import { ElementResolver, TemplateElement } from '../src/element-resolver.js';
 import { TypeRegistry } from '../src/type-registry.js';
 import { ContentDTO } from '../src/types.js';
 import { ELEMENT_TYPES } from './helpers.js';
-import { cacheSectionMirrorStatus } from '../src/utils.js';
+import { cacheSectionMirrorStatus, invalidateAllCaches } from '../src/utils.js';
 
 /** Marks the section ids used in these tests as non-mirrors so the read-only
  * guard resolves from cache without issuing a GET /hierarchy request. */
@@ -965,6 +965,71 @@ describe('ContentItem – additional coverage', () => {
       expect(item.fields['Group Select']).toEqual([
         { id: 40, name: 'Sub-Sub Group', selected: true },
       ]);
+    });
+
+    describe('group tree cache invalidation', () => {
+      type RecordedCall = { method: string; path: string; body?: Record<string, unknown> };
+
+      /** Returns responses[n], repeating the last entry for later calls. */
+      const nth = <T>(responses: T[], n: number): T =>
+        responses[Math.min(n, responses.length - 1)];
+
+      const fetchesOf = (calls: RecordedCall[], path: string) =>
+        calls.filter((c) => c.path === path);
+
+      const renamedGroups = [
+        { id: 1, name: 'Sample Site', groupChildren: [] },
+        { id: 31, name: 'CSV Redirects', groupChildren: [
+          { id: 41, name: 'Renamed Group', groupChildren: [] },
+          { id: 34, name: 'Sub Group', groupChildren: [
+            { id: 40, name: 'Sub-Sub Group', groupChildren: [] },
+          ] },
+        ] },
+      ];
+
+      function mockGroupTree(groupResponses: unknown[]): RecordedCall[] {
+        const calls: RecordedCall[] = [];
+        let groupCalls = 0;
+        (http.request as ReturnType<typeof vi.fn>).mockImplementation(
+          async (opts: { method: string; path: string; body?: Record<string, unknown> }) => {
+            calls.push({ method: opts.method, path: opts.path, body: opts.body });
+            if (opts.path === '/type/') return ELEMENT_TYPES;
+            if (opts.path === '/group/topLevelGroups') return nth(groupResponses, groupCalls++);
+            throw new Error(`Unexpected: ${opts.method} ${opts.path}`);
+          },
+        );
+        return calls;
+      }
+
+      const dto: ContentDTO = {
+        id: 100, contentTypeID: 44, name: 'Test', language: 'en',
+        status: 1, elements: { 'Groups#19:17': '41' }, version: 1, owner: { id: 0, type: 'USER' }, channels: [],
+      };
+      const elems: TemplateElement[] = [
+        { id: 19, name: 'Groups', alias: 'Group Select', type: 17, sequence: 1, listId: 0 },
+      ];
+
+      beforeEach(() => {
+        invalidateAllCaches();
+      });
+
+      it('re-fetches GET /group/topLevelGroups after invalidateAllCaches()', async () => {
+        const calls = mockGroupTree([mockGroups, renamedGroups]);
+
+        const first = await createContentItem(dto, http, 10, resolver, elems, typeRegistry);
+        expect(first.fields['Group Select']).toEqual([
+          { id: 41, name: 'Other Sub Group', selected: true },
+        ]);
+        expect(fetchesOf(calls, '/group/topLevelGroups')).toHaveLength(1);
+
+        invalidateAllCaches();
+
+        const second = await createContentItem(dto, http, 10, resolver, elems, typeRegistry);
+        expect(second.fields['Group Select']).toEqual([
+          { id: 41, name: 'Renamed Group', selected: true },
+        ]);
+        expect(fetchesOf(calls, '/group/topLevelGroups')).toHaveLength(2);
+      });
     });
   });
 
